@@ -14,8 +14,10 @@ main:
   - title: "Teaching"
     url: /teaching/    
     
-  - title: "Portfolio"
-    url: /portfolio/
+  # …
+  - title: "Portfolio"          # <-- keep the label
+    url: /files/HarshaTurlapatiPortfolio_v1.pdf   # <-- new direct link
+  # …
         
   - title: "Blog Posts"
     url: /year-archive/
