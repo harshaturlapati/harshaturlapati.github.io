@@ -8,9 +8,9 @@
 
 # Basic Site Settings
 locale                   : "en-US"
-title                    : "Harsha Turlapati"
+title                    : "Sri Harsha Turlapati"
 title_separator          : "-"
-name                     : &name "Harsha Turlapati"
+name                     : &name "Sri Harsha Turlapati"
 description              : &description "Learning from haptic demonstrations"
 url                      : https://harshaturlapati.github.io # the base hostname & protocol for your site e.g. "https://mmistakes.github.io"
 baseurl                  : "" # the subpath of your site, e.g. "/blog"
@@ -21,8 +21,8 @@ repository               : "harshaturlapati/harshaturlapati.github.io"
 #               Additional customization can be done by editing /_includes/author-profile.html
 author:
   # Biographic information
-  avatar           : "profile.png"
-  name             : "Harsha Turlapati"
+  avatar           : "harsha_personal_portrait.jpg"
+  name             : "Sri Harsha Turlapati"
   pronouns         : # example: "she/her"  
   bio              : "Roboticist"
   location         : "Singapore"
