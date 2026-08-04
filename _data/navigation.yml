@@ -16,14 +16,14 @@ main:
     
   # …
   - title: "Portfolio"          # <-- keep the label
-    url: /files/HarshaTurlapatiPortfolio_v1.pdf   # <-- new direct link
+    url: /files/HarshaTurlapatiPortfolio_v2.pdf   # <-- new direct link
   # …
         
   #- title: "Blog Posts"
   #  url: /year-archive/
     
   - title: "CV"
-    url: /files/Harsha_Turlapati_CV_v10.pdf
+    url: /files/Harsha_Turlapati_CV_v11.pdf
     
   - title: "Videos"
     url: https://youtu.be/t3YDLbBpT1c?si=hfMLYnhVv6R8irpD
