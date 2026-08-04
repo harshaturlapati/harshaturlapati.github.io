@@ -15,8 +15,8 @@ main:
   #  url: /teaching/    
     
   # …
-  - title: "Portfolio"          # <-- keep the label
-    url: /files/HarshaTurlapatiPortfolio_v2.pdf   # <-- new direct link
+  - title: "Anthrobotics Lab"          # <-- keep the label
+    url: /files/Anthrobotics_lab.pdf   # <-- new direct link
   # …
         
   #- title: "Blog Posts"
