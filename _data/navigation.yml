@@ -16,7 +16,7 @@ main:
     
   # …
   - title: "Anthrobotics Lab"          # <-- keep the label
-    url: /files/Anthrobotics_lab.pdf   # <-- new direct link
+    url: /files/anthrobotics_lab_v3.pdf   # <-- new direct link
   # …
         
   #- title: "Blog Posts"
