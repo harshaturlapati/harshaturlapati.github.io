@@ -1,0 +1,906 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distributions explorer</title>
+<!--
+  L8_distributionExplorer_v2.html   Bernoulli, Binomial, Poisson and the Normal.
+  MTH240, SU7 Random variables (master slides 354-364) and SU8 Normal distribution.
+
+  Open it in any browser (double-click, or click the linked slide in PowerPoint).
+  It needs no internet connection: no libraries, everything is in this file.
+
+  Four tabs:
+    Bernoulli -> Binomial -> Poisson
+        Three columns, each with one simulated run above its pmf. "Normal curve"
+        draws N(np, np(1-p)) over the binomial and N(lambda, lambda) over the
+        Poisson; "lambda -> large" holds n = 200 and grows lambda to 60, so the
+        skewed Poisson turns into a bell (the skew 1/sqrt(lambda) is shown).
+    Normal in the wild
+        Physical quantities that are close to normal, why (many small effects
+        add up), and what is not normal. Each card opens its own question in
+        "Find a probability". A side panel adds up k random effects and shows
+        the sum turning normal (Central Limit Theorem).
+    Z table
+        The standard normal table, area to the LEFT of z, both halves. Type a z
+        or an area, or click a cell: the row, column and cell are circled as on
+        the printed table, the area is shaded, and the reading rule is spelled
+        out (-2.53 = (-2.5) + (-0.03): row -2.5, column .03).
+    Find a probability
+        Type the question as you would write it:
+          P(X < 21)   P(X > 42)   P(30 < X < 42)   P(|X - 36| < 12)
+          P(X > mu + 2 sigma)   P(X < x) = 0.95   P(X > x) = 0.05   P(Z < -2.53)
+        with X ~ N(mu, sigma^2) set above it (Z is always standard normal).
+        It shades the area, writes the standardising steps and shows the table
+        cells used, as a student would on paper.
+
+  Keys (first tab):  left/right n   up/down p   (shift = bigger steps)
+         L keep lambda   P play n -> infinity   G lambda -> large   N normal curve
+         R or space run again   V values   1 2 3 presets   F full screen (any tab)
+
+  Start values can go after a #, e.g.
+     L8_distributionExplorer_v2.html#tab=prob&mu=25&sd=0.02&q=P(24.97<X<25.03)
+     L8_distributionExplorer_v2.html#n=200&p=0.2&norm=1
+  (tab = dist, wild, ztab or prob; n, p, lock=1, v=1, norm=1; mu, sd, u, q; z).
+
+  (v2: adds the normal curve over the binomial and Poisson columns with a
+  "lambda -> large" animation and skewness readouts, and three new tabs:
+  Normal in the wild, an interactive Z table, and Find a probability for
+  typed questions such as P(x1 < X < x2), solved graphically and step by step.)
+-->
+<style>
+:root{
+  --bg:#f5f6f8; --card:#ffffff; --ink:#1b2030; --dim:#5d6578; --mute:#8b92a3;
+  --line:#e2e4ea; --grid:#eceef2; --blue:#2a78d6; --red:#e34948; --amber:#eda100;
+  --imp:#f1f2f5; --over:#5f6270; --vio:#6250d6; --hit:#d81f26;
+}
+*{box-sizing:border-box}
+html{font-size:clamp(12px,1.0vw,22px)}
+body{margin:0;height:100vh;overflow:hidden;background:var(--bg);color:var(--ink);
+  font-family:"Segoe UI",system-ui,-apple-system,Arial,sans-serif;
+  display:grid;grid-template-rows:auto 1fr auto}
+button{font:inherit;font-size:0.9rem;color:var(--ink);background:var(--card);border:1px solid #cfd3dc;
+  border-radius:8px;padding:0.35rem 0.75rem;cursor:pointer;white-space:nowrap}
+button:hover{background:#eef1f6}
+button.on{background:#e3edfb;border-color:var(--blue);color:#16457f}
+input[type=text],input[type=number],select{font:inherit;font-size:1rem;color:var(--ink);background:#fff;
+  border:1px solid #cfd3dc;border-radius:8px;padding:0.3rem 0.55rem}
+input:focus,select:focus{outline:2px solid #9cc0f0;outline-offset:0}
+.serif{font-family:Cambria,"Times New Roman",serif}
+
+/* ---- tabs */
+.tabs{display:flex;align-items:flex-end;gap:0.3rem;padding:0.55rem 1.4rem 0;border-bottom:1px solid var(--line)}
+.tab{border:1px solid transparent;border-bottom:none;border-radius:10px 10px 0 0;background:transparent;
+  font-size:1rem;padding:0.5rem 1.05rem;color:var(--dim);margin-bottom:-1px}
+.tab:hover{background:#eceff4}
+.tab.on{background:var(--card);border-color:var(--line);color:var(--ink);font-weight:600}
+.tabs .sp{flex:1}
+.tabs .fsb{margin-bottom:0.35rem}
+.view{display:none;min-height:0}
+.view.on{display:grid}
+
+/* ---- tab 1: Bernoulli -> Binomial -> Poisson */
+#v-dist{grid-template-rows:auto auto 1fr}
+.top{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:0.6rem 1.4rem 0}
+h1{font-size:1.6rem;font-weight:600;margin:0;letter-spacing:-0.01em}
+h1 .ar{color:var(--mute);font-weight:400;margin:0 0.35rem}
+.presets{display:flex;gap:0.4rem;flex-wrap:wrap;justify-content:flex-end}
+.controls{display:flex;align-items:center;gap:0.5rem 1.1rem;flex-wrap:wrap;padding:0.5rem 1.4rem 0.6rem}
+.ctl{display:flex;align-items:center;gap:0.6rem;flex:1 1 12rem;min-width:10rem}
+.ctl label{font-size:1.15rem;font-style:italic;font-family:Cambria,"Times New Roman",serif;min-width:0.8rem}
+.ctl input{flex:1;accent-color:var(--blue);height:1.2rem}
+.ctl output{font-size:1.05rem;font-weight:600;min-width:3.4rem;text-align:right;font-variant-numeric:tabular-nums}
+.lam{font-size:1.05rem;white-space:nowrap}
+.lam b{font-variant-numeric:tabular-nums}
+.chk{display:flex;align-items:center;gap:0.35rem;font-size:0.95rem;white-space:nowrap;cursor:pointer}
+.chk input{width:1.05rem;height:1.05rem;accent-color:var(--blue)}
+main{display:grid;grid-template-columns:0.72fr 5.2rem 1fr 5.2rem 1fr;gap:0.5rem;padding:0 1.4rem 0.5rem;min-height:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:0.8rem 1rem 0.7rem;
+  display:flex;flex-direction:column;min-height:0;min-width:0}
+.card h2{font-size:1.3rem;font-weight:600;margin:0}
+.card h2 small{font-size:0.9rem;font-weight:400;color:var(--dim);margin-left:0.4rem}
+.f{font-family:Cambria,"Times New Roman",serif;font-size:1.1rem;margin:0.3rem 0 0.1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.f i{font-style:italic}
+.strip{height:3.9rem;margin:0.3rem 0 0.15rem}
+.strip svg,.chart svg,.plot svg{width:100%;height:100%;display:block}
+.leg{display:flex;flex-wrap:wrap;gap:0.1rem 0.9rem;font-size:0.8rem;color:var(--dim);min-height:1.1rem}
+.sw{display:inline-block;width:0.75rem;height:0.75rem;border-radius:2px;margin-right:0.3rem;vertical-align:-0.05rem}
+.dash{display:inline-block;width:1.3rem;border-top:2px dashed var(--over);vertical-align:0.25rem;margin-right:0.3rem}
+.nline{display:inline-block;width:1.3rem;border-top:3px solid var(--vio);vertical-align:0.22rem;margin-right:0.3rem}
+.chart,.plot{flex:1;min-height:0;position:relative}
+.stats{display:flex;flex-wrap:wrap;gap:0.1rem 1rem;font-size:0.9rem;color:var(--dim);padding-top:0.35rem;border-top:1px solid var(--line)}
+.stats b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.stats .run b{color:#9a6700}
+.stats .sk b{color:var(--vio)}
+.arrow{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:0.3rem;color:var(--dim)}
+.arrow .big{font-size:2.6rem;line-height:1;color:var(--mute)}
+.arrow .t{font-size:0.82rem;line-height:1.35}
+
+/* ---- tab 2: normal in the wild */
+#v-wild{grid-template-columns:minmax(0,1fr) 27rem;grid-template-rows:minmax(0,1fr);gap:1rem;padding:0.9rem 1.4rem 0.6rem}
+.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:0.8rem;min-height:0}
+.wc{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:0.8rem 0.9rem;display:flex;flex-direction:column;gap:0.45rem;min-height:0;overflow:auto}
+.wc h3{margin:0;font-size:1.08rem;font-weight:600}
+.wc .w{font-size:0.92rem;line-height:1.4}
+.wc .why{font-size:0.84rem;color:var(--dim);line-height:1.45}
+.wc .tag{font-family:Cambria,serif;font-size:0.95rem;background:#efecfd;color:#3b2f9a;border-radius:6px;padding:0.2rem 0.5rem;align-self:flex-start}
+.wc button{margin-top:auto;font-family:Cambria,serif;font-size:0.95rem;white-space:normal;text-align:left}
+.wc.alt{background:#fafafb}
+.wc ul{margin:0;padding-left:1.05rem;font-size:0.85rem;color:var(--dim);line-height:1.45}
+.wc ul b{color:var(--ink);font-weight:600}
+.clt{gap:0.5rem}
+.clt .row{display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;font-size:0.92rem}
+.clt input[type=range]{flex:1;accent-color:var(--vio)}
+.note{font-size:0.86rem;color:var(--dim);line-height:1.45}
+
+/* ---- tab 3: Z table */
+#v-ztab{grid-template-columns:auto minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:1.2rem;padding:0.9rem 1.4rem 0.6rem}
+.zleft{display:flex;flex-direction:column;gap:0.5rem;min-height:0}
+.zhead{display:flex;align-items:center;gap:0.5rem;font-size:0.9rem}
+.zhead .t{font-weight:600;margin-right:auto}
+.ztbl{overflow:auto;min-height:0;border:1px solid var(--line);border-radius:12px;background:#fff}
+table.z{border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:0.8rem;font-family:"Times New Roman",Cambria,serif}
+table.z th,table.z td{padding:0.12rem 0.5rem;text-align:right;white-space:nowrap}
+table.z thead th{position:sticky;top:0;background:#fff;border-bottom:2px solid var(--ink);z-index:1}
+table.z tbody th{border-right:2px solid var(--ink);padding-right:0.6rem}
+table.z tr.sep>*{border-bottom:1px solid #b9bdc7}
+table.z td{cursor:pointer}
+table.z td:hover{background:#eaf1fc}
+table.z .rb{background:#fff2f2}
+table.z .cb{background:#fff2f2}
+table.z .hl{color:var(--hit);font-weight:700}
+table.z .hit{color:var(--hit);font-weight:700;outline:2.5px solid var(--hit);outline-offset:-3px;border-radius:999px;background:#fff}
+.zright{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;gap:0.6rem;min-height:0}
+.zin{display:flex;flex-wrap:wrap;gap:0.6rem 1.4rem;align-items:center;font-size:1rem}
+.zin input{width:7rem;font-family:Cambria,serif;font-size:1.15rem}
+.res{font-family:Cambria,"Times New Roman",serif;font-size:1.6rem;font-weight:600}
+.res .p{color:var(--hit)}
+.boxes{display:grid;grid-template-columns:1fr 1fr;gap:0.7rem}
+.ibox{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:0.65rem 0.85rem;font-size:0.92rem;line-height:1.5}
+.ibox h4{margin:0 0 0.25rem;font-size:0.95rem}
+.ibox .m{font-family:Cambria,serif;font-size:1.02rem}
+.ibox .bad{color:var(--hit)}
+
+/* ---- tab 4: find a probability */
+#v-prob{grid-template-rows:auto auto auto minmax(0,1fr);gap:0.45rem;padding:0.8rem 1.4rem 0.6rem}
+.qrow{display:flex;flex-wrap:wrap;gap:0.6rem 1rem;align-items:center;font-size:1.02rem}
+.qrow .num{width:6.2rem;font-family:Cambria,serif;font-size:1.1rem}
+.qrow .unit{width:6rem}
+#qin{flex:1;min-width:16rem;font-family:Cambria,"Times New Roman",serif;font-size:1.3rem;padding:0.35rem 0.7rem}
+#go{font-size:1.05rem;padding:0.4rem 1.1rem;background:var(--blue);color:#fff;border-color:var(--blue)}
+#go:hover{background:#1f63b8}
+.chips{display:flex;flex-wrap:wrap;gap:0.4rem;align-items:center;font-size:0.9rem;color:var(--dim)}
+.chip{font-family:Cambria,serif;font-size:0.95rem;padding:0.15rem 0.65rem;border-radius:999px}
+.err{color:var(--hit);font-size:0.95rem;min-height:1.3rem}
+.pgrid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:1rem;min-height:0}
+.pgrid .card{padding:0.7rem 0.9rem}
+.steps{overflow:auto;min-height:0}
+.steps ol{margin:0.2rem 0 0.4rem;padding-left:1.5rem;font-family:Cambria,"Times New Roman",serif;font-size:1.08rem;line-height:1.6}
+.steps li{margin-bottom:0.2rem}
+.steps .sm{font-family:"Segoe UI",system-ui,sans-serif;font-size:0.85rem;color:var(--dim)}
+.steps .bx{border:2px solid var(--hit);padding:0 0.35rem;color:var(--hit);font-weight:600}
+.steps h4{margin:0.6rem 0 0.3rem;font-size:0.92rem;color:var(--dim);font-weight:600}
+.excerpt{margin:0.2rem 0 0.5rem;overflow-x:auto}
+.excerpt table.z{font-size:0.82rem;border:1px solid var(--line)}
+
+footer{display:flex;justify-content:space-between;gap:1rem;font-size:0.78rem;color:var(--mute);padding:0.15rem 1.4rem 0.5rem}
+kbd{font:inherit;border:1px solid #d6d9e0;border-bottom-width:2px;border-radius:4px;padding:0 0.25rem;background:#fff;color:var(--dim)}
+svg text{font-family:"Segoe UI",system-ui,Arial,sans-serif}
+.grid{stroke:var(--grid);stroke-width:1}
+.axis{stroke:#b9bdc7;stroke-width:1.2}
+.ytick{fill:var(--mute);font-size:0.72rem;text-anchor:end;dominant-baseline:middle}
+.xtick{fill:var(--dim);font-size:0.78rem;text-anchor:middle}
+.ztick{fill:var(--mute);font-size:0.72rem;text-anchor:middle}
+.ylab{fill:var(--dim);font-size:0.78rem}
+.val{fill:var(--ink);font-size:0.7rem;text-anchor:middle}
+.imp{fill:var(--imp)}
+.impt{fill:var(--mute);font-size:0.8rem;text-anchor:middle;dominant-baseline:middle}
+.lbl{fill:var(--dim);font-size:0.8rem}
+.mk{fill:var(--hit);font-size:0.85rem;font-weight:600}
+#tip{position:fixed;pointer-events:none;background:#1b2030;color:#fff;font-size:0.85rem;padding:0.3rem 0.55rem;
+  border-radius:6px;opacity:0;transition:opacity .1s;white-space:nowrap;z-index:9;font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<nav class="tabs">
+  <button class="tab on" data-tab="dist">Bernoulli → Binomial → Poisson</button>
+  <button class="tab" data-tab="wild">Normal in the wild</button>
+  <button class="tab" data-tab="ztab">Z table</button>
+  <button class="tab" data-tab="prob">Find a probability</button>
+  <span class="sp"></span>
+  <button class="fsb" id="fsb" title="key F">⛶&nbsp; Full screen</button>
+</nav>
+
+<!-- ================================================================ tab 1 -->
+<section class="view on" id="v-dist">
+  <div class="top">
+    <h1>Bernoulli<span class="ar">→</span>Binomial<span class="ar">→</span>Poisson<span class="ar">→</span><span style="color:var(--vio)">Normal</span></h1>
+    <div class="presets">
+      <button data-pre="1" title="key 1">One trial: n = 1</button>
+      <button data-pre="2" title="key 2">Fair coin: n = 10, p = ½</button>
+      <button data-pre="3" title="key 3">Rare events: n = 60, p = 0.05</button>
+    </div>
+  </div>
+  <div class="controls">
+    <div class="ctl"><label for="ps">p</label><input id="ps" type="range" min="0.005" max="0.95" step="any" value="0.2"><output id="pv">0.20</output></div>
+    <div class="ctl"><label for="ns">n</label><input id="ns" type="range" min="1" max="200" step="1" value="10"><output id="nv">10</output></div>
+    <div class="lam"><i class="serif">λ</i> = <i class="serif">np</i> = <b id="lv">2.00</b></div>
+    <label class="chk"><input type="checkbox" id="lk">keep λ fixed</label>
+    <button id="play" title="key P">▶&nbsp; n → ∞</button>
+    <button id="grow" title="key G">▶&nbsp; λ → large</button>
+    <button id="nb" title="key N">Normal curve</button>
+    <button id="rr" title="key R or space">↻&nbsp; Run again</button>
+    <button id="vb" title="key V">Values</button>
+  </div>
+  <main>
+    <section class="card">
+      <h2>Bernoulli(<i>p</i>)<small>one trial</small></h2>
+      <div class="f"><i>P</i>(<i>X</i> = 1) = <i>p</i>, &nbsp; <i>P</i>(<i>X</i> = 0) = 1 − <i>p</i></div>
+      <div class="strip"><svg id="s1"></svg></div>
+      <div class="leg"><span>this trial is trial 1 of the binomial strip</span></div>
+      <div class="chart"><svg id="c1"></svg></div>
+      <div class="stats" id="t1"></div>
+    </section>
+    <div class="arrow"><div class="big">→</div><div class="t">add up<br><i>n</i> trials</div></div>
+    <section class="card">
+      <h2>Binomial(<i>n</i>, <i>p</i>)<small>X = number of successes</small></h2>
+      <div class="f"><i>P</i>(<i>X</i> = <i>k</i>) = C(<i>n</i>, <i>k</i>) <i>p<sup>k</sup></i> (1 − <i>p</i>)<sup><i>n</i>−<i>k</i></sup>, &nbsp; <i>k</i> = 0, …, <i>n</i></div>
+      <div class="strip"><svg id="s2"></svg></div>
+      <div class="leg"><span><span class="sw" style="background:var(--blue)"></span>a success</span><span><span class="sw" style="background:var(--amber)"></span>this run's X</span><span id="ln2" hidden><span class="nline"></span>N(np, np(1 − p))</span></div>
+      <div class="chart"><svg id="c2"></svg></div>
+      <div class="stats" id="t2"></div>
+    </section>
+    <div class="arrow"><div class="big">→</div><div class="t"><i>n</i> → ∞<br><i>p</i> → 0<br><i>np</i> = λ fixed</div></div>
+    <section class="card">
+      <h2>Poisson(λ)<small>X = events in the interval</small></h2>
+      <div class="f"><i>P</i>(<i>X</i> = <i>k</i>) = <i>e</i><sup>−λ</sup> λ<sup><i>k</i></sup> / <i>k</i>!, &nbsp; <i>k</i> = 0, 1, 2, …</div>
+      <div class="strip"><svg id="s3"></svg></div>
+      <div class="leg"><span><span class="sw" style="background:var(--red)"></span>Poisson(λ)</span><span><span class="dash"></span>Binomial(n, p), same mean</span><span id="ln3" hidden><span class="nline"></span>N(λ, λ)</span></div>
+      <div class="chart"><svg id="c3"></svg></div>
+      <div class="stats" id="t3"></div>
+    </section>
+  </main>
+</section>
+
+<!-- ================================================================ tab 2 -->
+<section class="view" id="v-wild">
+  <div class="cards" id="cards"></div>
+  <section class="card clt">
+    <h2>Why: add up small effects</h2>
+    <div class="row">Each effect is a
+      <select id="src">
+        <option value="coin">coin flip (0 or 1)</option>
+        <option value="die">die roll (1 to 6)</option>
+        <option value="uni">uniform amount (0 to 1)</option>
+        <option value="exp" selected>skewed amount (exponential)</option>
+      </select>
+    </div>
+    <div class="row"><span>Add up <b id="kv">1</b></span><input type="range" id="ks" min="1" max="40" step="1" value="1"><button id="rs">↻</button></div>
+    <div class="plot"><svg id="cltp"></svg></div>
+    <div class="note" id="cltc"></div>
+    <div class="note">One effect on its own can look like anything. Add up enough <b>independent</b> effects and the total follows the violet normal curve: the <b>Central Limit Theorem</b>. That is why the quantities on the left are close to normal: each is the sum of many small, independent nudges.</div>
+  </section>
+</section>
+
+<!-- ================================================================ tab 3 -->
+<section class="view" id="v-ztab">
+  <div class="zleft">
+    <div class="zhead"><span class="t">Standard normal table: area to the LEFT of z</span>
+      <button id="zneg" class="on">Negative z</button><button id="zpos">Positive z</button></div>
+    <div class="ztbl" id="ztbl"></div>
+  </div>
+  <div class="zright">
+    <div class="zin">
+      <label>Look up z = <input type="text" id="zz" value="-2.53"></label>
+      <label>or find z for an area = <input type="text" id="za" placeholder="0.95"></label>
+      <span class="note">or click any cell</span>
+    </div>
+    <div class="res" id="zres"></div>
+    <div class="plot"><svg id="zplot"></svg></div>
+    <div class="boxes">
+      <div class="ibox" id="zread"></div>
+      <div class="ibox" id="zmore"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================================================================ tab 4 -->
+<section class="view" id="v-prob">
+  <div class="qrow">
+    <span class="serif" style="font-size:1.2rem"><i>X</i> ~ <i>N</i>(<i>μ</i>, <i>σ</i>²) with</span>
+    <label class="serif"><i>μ</i> = <input type="text" class="num" id="qmu" value="36"></label>
+    <label class="serif"><i>σ</i> = <input type="text" class="num" id="qsd" value="6"></label>
+    <label>units <input type="text" class="unit" id="qu" placeholder="mm"></label>
+    <button id="fromlam" title="Set μ = λ and σ = √λ from the first tab">μ = λ, σ = √λ from Poisson</button>
+  </div>
+  <div class="qrow">
+    <input type="text" id="qin" value="P(X < 21)" spellcheck="false" autocomplete="off" aria-label="Probability question">
+    <button id="go">Find</button>
+  </div>
+  <div>
+    <div class="chips">Try:
+      <button class="chip">P(X &lt; μ − σ)</button>
+      <button class="chip">P(X &gt; μ + 2σ)</button>
+      <button class="chip">P(μ − σ &lt; X &lt; μ + σ)</button>
+      <button class="chip">P(|X − μ| &lt; 2σ)</button>
+      <button class="chip">P(X &lt; x) = 0.95</button>
+      <button class="chip">P(X &gt; x) = 0.05</button>
+      <button class="chip">P(|X − μ| &lt; c) = 0.95</button>
+      <button class="chip">P(Z &lt; −2.53)</button>
+      <button class="chip">P(X = μ)</button>
+    </div>
+    <div class="err" id="qerr"></div>
+  </div>
+  <div class="pgrid">
+    <section class="card">
+      <div class="res" id="qres"></div>
+      <div class="plot"><svg id="qplot"></svg></div>
+    </section>
+    <section class="card steps" id="qsteps"></section>
+  </div>
+</section>
+
+<footer><span id="keys"></span><span>MTH240 &nbsp;·&nbsp; SU7 – SU8</span></footer>
+<div id="tip"></div>
+
+<script>
+// ============================================================== shared ===
+const BLUE='#2a78d6',RED='#e34948',AMB='#eda100',OVER='#5f6270',VIO='#6250d6',HIT='#d81f26';
+const $=id=>document.getElementById(id);
+const SQ2PI=Math.sqrt(2*Math.PI);
+const LF=[0];for(let i=1;i<=1200;i++)LF[i]=LF[i-1]+Math.log(i);
+
+function Phi(x){                                   // Marsaglia's series, |error| < 1e-15
+  if(x<-9)return 0;if(x>9)return 1;
+  let s=x,t=0,b=x,i=1;const q=x*x;
+  while(s!==t){t=s;i+=2;b*=q/i;s=t+b}
+  return Math.min(1,Math.max(0,0.5+s*Math.exp(-0.5*q-0.91893853320467274178)));
+}
+function PhiInv(p){let lo=-9,hi=9;for(let i=0;i<100;i++){const m=(lo+hi)/2;if(Phi(m)<p)lo=m;else hi=m}return (lo+hi)/2}
+function npdf(x,mu,sd){const z=(x-mu)/sd;return Math.exp(-0.5*z*z)/(sd*SQ2PI)}
+function niceStep(x){const e=10**Math.floor(Math.log10(x)),f=x/e;return (f<=1?1:f<=2?2:f<=2.5?2.5:f<=5?5:10)*e}
+function decs(st){let d=0;while(d<4&&Math.abs(Math.round(st*10**d)-st*10**d)>1e-9)d++;return d}
+function rem(){return parseFloat(getComputedStyle(document.documentElement).fontSize)}
+function size(svg){const r=svg.getBoundingClientRect(),W=Math.max(r.width,40),H=Math.max(r.height,30);svg.setAttribute('viewBox',`0 0 ${W} ${H}`);return [W,H]}
+const minus=s=>String(s).replace(/-/g,'−');
+function fx(v){if(!isFinite(v))return v>0?'∞':'−∞';const r=Math.abs(v)>=1000?Math.round(v*100)/100:Math.round(v*1e4)/1e4;return minus(Object.is(r,-0)?0:r)}
+function fz(z){const r=Math.round(z*100)/100;return (r<0?'−':'')+Math.abs(r).toFixed(2)}
+function ft(v){return v.toFixed(5).replace(/^0/,'')}
+const SUP={'0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹','-':'⁻'};
+function fpr(v){if(v>0&&v<5e-5){const [m,e]=v.toExponential(2).split('e');return m+' × 10'+e.replace('+','').split('').map(c=>SUP[c]).join('')}return v.toFixed(5)}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+// ============================================================ tab 1 ===
+const NMAX=200,PMIN=0.005,PMAX=0.95;
+const S={p:0.2,n:10,lock:false,lam:2,vals:false,playing:false,norm:false};
+let U=[],V=0,T=[];
+function reroll(){U=Array.from({length:NMAX},()=>Math.random());V=Math.random();T=Array.from({length:600},()=>Math.random());}
+function binom(n,p){const o=[];for(let k=0;k<=n;k++)o.push(Math.exp(LF[n]-LF[k]-LF[n-k]+k*Math.log(p)+(n-k)*Math.log1p(-p)));return o}
+function pois(l,K){const o=[];for(let k=0;k<=K;k++)o.push(Math.exp(-l+k*Math.log(l)-LF[k]));return o}
+function fp(p){return p<0.1?p.toFixed(3):p.toFixed(2)}
+function f3(v){return v<10?v.toFixed(3):v.toFixed(2)}
+
+function compute(){
+  const n=S.n,p=S.p,lam=n*p;
+  const x1=U[0]<p?1:0;
+  const trials=U.slice(0,n).map(u=>u<p),x2=trials.filter(Boolean).length;
+  const B=binom(n,p);
+  const Kp=Math.max(n,Math.ceil(lam+8*Math.sqrt(lam)+12)),P=pois(lam,Kp);
+  let c=0,x3=Kp;for(let k=0;k<=Kp;k++){c+=P[k];if(V<=c){x3=k;break}}
+  let peak=0;for(const v of B)peak=Math.max(peak,v);for(const v of P)peak=Math.max(peak,v);
+  let xm=0;for(let k=0;k<=Kp;k++){if((B[k]||0)>=1e-3*peak||P[k]>=1e-3*peak)xm=k}
+  xm=Math.max(xm,x2,x3,Math.min(n,4),4);
+  const st=niceStep(peak*1.12/4),ymax=Math.ceil(peak*1.12/st)*st;
+  return {n,p,lam,x1,trials,x2,B,P,x3,xm,ymax};
+}
+
+function drawChart(svg,cfg){
+  const [W,H]=size(svg),fs=rem();
+  const L=fs*3.1,R=fs*0.5,Tp=fs*1.9,Bt=fs*1.6;
+  const pw=W-L-R,ph=H-Tp-Bt,N=cfg.xmax+1,bw=pw/N,barW=Math.min(bw*0.78,fs*4.5);
+  const y=v=>Tp+ph*(1-Math.min(v,cfg.ymax)/cfg.ymax);
+  const showV=cfg.show&&bw>=fs*2.3;
+  let s='';
+  const st=cfg.step||niceStep(cfg.ymax/4),d=decs(st);
+  for(let g=0;g<=cfg.ymax+1e-9;g+=st){const yy=y(g).toFixed(1);s+=`<line class="grid" x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}"/><text class="ytick" x="${L-fs*0.4}" y="${yy}">${g.toFixed(d)}</text>`}
+  s+=`<text class="ylab" x="${L-fs*0.4}" y="${fs*0.85}" text-anchor="end">P(X = k)</text>`;
+  if(cfg.ceil!=null&&cfg.ceil<cfg.xmax){
+    const x0=L+(cfg.ceil+1)*bw;
+    s+=`<rect class="imp" x="${x0}" y="${Tp}" width="${W-R-x0}" height="${ph}"/>`;
+    if(W-R-x0>fs*7)s+=`<text class="impt" x="${(x0+W-R)/2}" y="${Tp+ph*0.45}">k &gt; n</text><text class="impt" x="${(x0+W-R)/2}" y="${Tp+ph*0.45+fs*1.1}">impossible</text>`;
+  }
+  for(let k=0;k<N;k++){
+    if(cfg.ceil!=null&&k>cfg.ceil)continue;
+    const v=cfg.vals[k]||0,xc=L+(k+0.5)*bw,top=y(v),h=Tp+ph-top;
+    if(h>0.3)s+=`<rect x="${(xc-barW/2).toFixed(1)}" y="${top.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="${Math.min(3,barW/4).toFixed(1)}" fill="${k===cfg.hit?AMB:cfg.color}"/>`;
+    if(showV&&v>=0.0005)s+=`<text class="val" x="${xc}" y="${top-fs*0.35}">${v.toFixed(3)}</text>`;
+  }
+  if(cfg.over){
+    let pts=[];for(let k=0;k<N;k++){const v=cfg.over[k];if(v!=null)pts.push([L+(k+0.5)*bw,y(v)])}
+    s+=`<polyline points="${pts.map(q=>q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ')}" fill="none" stroke="${OVER}" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>`;
+    if(bw>=fs*0.8)for(const q of pts)s+=`<circle cx="${q[0].toFixed(1)}" cy="${q[1].toFixed(1)}" r="${Math.min(3.5,bw/5).toFixed(1)}" fill="#fff" stroke="${OVER}" stroke-width="1.5"/>`;
+  }
+  if(cfg.normal&&cfg.normal.sd>0){                 // bars are 1 wide, so the density sits on the same scale
+    let dd='';const nn=Math.max(80,Math.round(pw/3));
+    for(let i=0;i<=nn;i++){const px=L+pw*i/nn,xk=(px-L)/bw-0.5;dd+=(i?'L':'M')+px.toFixed(1)+','+y(npdf(xk,cfg.normal.mu,cfg.normal.sd)).toFixed(1)}
+    s+=`<path d="${dd}" fill="none" stroke="${VIO}" stroke-width="2.6" stroke-linejoin="round"/>`;
+  }
+  if(cfg.hit!=null&&cfg.hit<=cfg.xmax){
+    const xc=L+(cfg.hit+0.5)*bw,v=cfg.vals[cfg.hit]||0;
+    let ty=y(v)-(showV?fs*1.35:fs*0.35);ty=Math.max(ty,Tp*0.75);const a=Math.max(4,Math.min(fs*0.45,bw*0.35));
+    s+=`<polygon points="${xc-a},${ty-a*1.4} ${xc+a},${ty-a*1.4} ${xc},${ty}" fill="${AMB}"/>`;
+  }
+  s+=`<line class="axis" x1="${L}" x2="${W-R}" y1="${Tp+ph}" y2="${Tp+ph}"/>`;
+  const xs=N<=21?1:N<=41?2:N<=101?5:10;
+  for(let k=0;k<N;k+=xs)s+=`<text class="xtick" x="${L+(k+0.5)*bw}" y="${Tp+ph+fs*1.15}">${k}</text>`;
+  for(let k=0;k<N;k++)s+=`<rect data-k="${k}" x="${L+k*bw}" y="${Tp}" width="${bw}" height="${ph+Bt*0.6}" fill="transparent"/>`;
+  svg.innerHTML=s;svg._cfg=cfg;
+}
+
+function drawStrips(m){
+  const fs=rem();
+  {const svg=$('s1'),[W,H]=size(svg),sz=Math.min(H*0.86,fs*3.2),x=W/2-sz*0.9,yy=(H-sz)/2;
+   svg.innerHTML=`<rect x="${x}" y="${yy}" width="${sz}" height="${sz}" rx="6" fill="${m.x1?BLUE:'#fff'}" stroke="${m.x1?BLUE:'#b9bdc7'}" stroke-width="1.5"/>`+
+     `<text x="${x+sz/2}" y="${yy+sz/2}" text-anchor="middle" dominant-baseline="central" font-size="${sz*0.5}" font-weight="600" fill="${m.x1?'#fff':'#8b92a3'}">${m.x1}</text>`+
+     `<text class="lbl" x="${x+sz+fs*0.7}" y="${H/2}" dominant-baseline="middle" font-size="${fs*0.95}">${m.x1?'success':'failure'}</text>`}
+  {const svg=$('s2'),[W,H]=size(svg),n=m.n,g=n>80?1:n>30?1.5:3,pad=fs*0.3;
+   let w=(W-2*pad-g*(n-1))/n;w=Math.min(w,fs*2.6);const x0=W/2-(n*w+g*(n-1))/2,hh=Math.min(H*0.7,fs*2.6),yy=(H-hh)/2;
+   let s='';m.trials.forEach((t,i)=>{s+=`<rect x="${(x0+i*(w+g)).toFixed(1)}" y="${yy}" width="${Math.max(w,0.8).toFixed(1)}" height="${hh}" rx="${Math.min(4,w/3).toFixed(1)}" fill="${t?BLUE:'#fff'}" stroke="${t?BLUE:'#c3c7d0'}" stroke-width="${w>4?1:0.5}"/>`});
+   svg.innerHTML=s}
+  {const svg=$('s3'),[W,H]=size(svg),a=fs*1.2,b=W-fs*1.2,yy=H*0.42;
+   let s=`<line x1="${a}" x2="${b}" y1="${yy}" y2="${yy}" stroke="#9aa0ad" stroke-width="2"/>`+
+     `<line x1="${a}" x2="${a}" y1="${yy-fs*0.6}" y2="${yy+fs*0.6}" stroke="#9aa0ad" stroke-width="2"/><line x1="${b}" x2="${b}" y1="${yy-fs*0.6}" y2="${yy+fs*0.6}" stroke="#9aa0ad" stroke-width="2"/>`+
+     `<text class="lbl" x="${a}" y="${yy+fs*1.55}" text-anchor="start">start</text><text class="lbl" x="${b}" y="${yy+fs*1.55}" text-anchor="end">end of interval</text>`;
+   const r=Math.max(2.5,Math.min(fs*0.5,(b-a)/(m.x3*2.2+1)));
+   for(let i=0;i<m.x3;i++)s+=`<circle cx="${(a+(b-a)*T[i]).toFixed(1)}" cy="${yy}" r="${r.toFixed(1)}" fill="${RED}" stroke="#fff" stroke-width="1.2"/>`;
+   svg.innerHTML=s}
+}
+
+function render(){
+  if(tab!=='dist')return;
+  const m=compute();
+  $('ps').value=S.p;$('ns').value=S.n;
+  $('pv').textContent=fp(S.p);$('nv').textContent=S.n;$('lv').textContent=m.lam.toFixed(2);
+  $('lk').checked=S.lock;$('vb').classList.toggle('on',S.vals);$('nb').classList.toggle('on',S.norm);
+  $('play').innerHTML=S.playing==='n'?'■&nbsp; Stop':'▶&nbsp; n → ∞';$('play').classList.toggle('on',S.playing==='n');
+  $('grow').innerHTML=S.playing==='lam'?'■&nbsp; Stop':'▶&nbsp; λ → large';$('grow').classList.toggle('on',S.playing==='lam');
+  $('ln2').hidden=!S.norm;$('ln3').hidden=!S.norm;
+  drawStrips(m);
+  const sdB=Math.sqrt(m.lam*(1-m.p)),sdP=Math.sqrt(m.lam);
+  drawChart($('c1'),{vals:[1-m.p,m.p],xmax:1,ymax:1.15,step:0.25,color:BLUE,hit:m.x1,show:true});
+  drawChart($('c2'),{vals:m.B,xmax:m.xm,ymax:m.ymax,color:BLUE,hit:m.x2,ceil:m.n,show:S.vals,normal:S.norm?{mu:m.lam,sd:sdB}:null});
+  drawChart($('c3'),{vals:m.P,xmax:m.xm,ymax:m.ymax,color:RED,hit:m.x3,over:m.P.map((_,k)=>k<=m.n?m.B[k]:null),show:S.vals,normal:S.norm?{mu:m.lam,sd:sdP}:null});
+  const run=x=>`<span class="run"><span class="sw" style="background:var(--amber)"></span>this run: X = <b>${x}</b></span>`;
+  $('t1').innerHTML=`<span>E[X] = p = <b>${fp(m.p)}</b></span><span>Var(X) = p(1 − p) = <b>${f3(m.p*(1-m.p))}</b></span>${run(m.x1)}`;
+  $('t2').innerHTML=`<span>E[X] = np = <b>${m.lam.toFixed(2)}</b></span><span>Var(X) = np(1 − p) = <b>${f3(m.lam*(1-m.p))}</b></span><span class="sk">skew <b>${minus(((1-2*m.p)/sdB).toFixed(2))}</b></span>${run(m.x2)}`;
+  $('t3').innerHTML=`<span>E[X] = λ = <b>${m.lam.toFixed(2)}</b></span><span>Var(X) = λ = <b>${m.lam.toFixed(2)}</b></span><span class="sk">skew 1/√λ = <b>${(1/sdP).toFixed(2)}</b></span>${run(m.x3)}`;
+}
+
+function setP(p){S.p=Math.min(PMAX,Math.max(PMIN,p));S.lam=S.n*S.p}
+function setN(n){n=Math.min(NMAX,Math.max(1,Math.round(n)));S.n=n;if(S.lock)S.p=Math.min(PMAX,Math.max(PMIN,S.lam/n));else S.lam=n*S.p}
+function preset(i){stop();S.lock=false;if(i===1){S.n=1;setP(0.3)}if(i===2){S.n=10;setP(0.5)}if(i===3){S.n=60;setP(0.05)}render()}
+
+let timer=null;
+function stop(){if(timer)clearTimeout(timer);timer=null;S.playing=false}
+function animate(kind,dur,stepFn){
+  const t0=performance.now();S.playing=kind;render();
+  const step=()=>{const u=Math.min(1,(performance.now()-t0)/dur),e=u<0.5?2*u*u:1-2*(1-u)*(1-u);
+    stepFn(e);if(u<1){render();timer=setTimeout(step,40)}else{stop();render()}};
+  timer=setTimeout(step,40);
+}
+function play(){                                    // n -> infinity with lambda held: binomial -> Poisson
+  if(S.playing){stop();render();return}
+  S.lock=true;S.lam=S.n*S.p;
+  const n0=S.n>=NMAX?1:S.n;if(S.n>=NMAX)setN(1);
+  animate('n',7000,e=>setN(n0*Math.pow(NMAX/n0,e)));
+}
+function grow(){                                    // lambda -> large with n = 200: Poisson -> normal
+  if(S.playing){stop();render();return}
+  let l0=S.n*S.p;S.lock=false;S.norm=true;S.n=NMAX;
+  l0=Math.max(1,l0);if(l0>=55)l0=1;
+  animate('lam',8000,e=>setP((l0+(60-l0)*e)/NMAX));
+}
+
+$('ps').addEventListener('input',e=>{stop();setP(+e.target.value);render()});
+$('ns').addEventListener('input',e=>{stop();setN(+e.target.value);render()});
+$('lk').addEventListener('change',e=>{S.lock=e.target.checked;S.lam=S.n*S.p;render()});
+$('play').addEventListener('click',play);
+$('grow').addEventListener('click',grow);
+$('nb').addEventListener('click',()=>{S.norm=!S.norm;render()});
+$('rr').addEventListener('click',()=>{reroll();render()});
+$('vb').addEventListener('click',()=>{S.vals=!S.vals;render()});
+document.querySelectorAll('[data-pre]').forEach(b=>b.addEventListener('click',()=>preset(+b.dataset.pre)));
+
+const tip=$('tip');
+['c1','c2','c3'].forEach(id=>{const svg=$(id);
+  svg.addEventListener('mousemove',e=>{const k=e.target.dataset&&e.target.dataset.k;const cfg=svg._cfg;
+    if(k==null||!cfg){tip.style.opacity=0;return}const kk=+k;let t;
+    if(cfg.ceil!=null&&kk>cfg.ceil)t=`P(X = ${kk}) = 0   (k > n)`;
+    else{t=`P(X = ${kk}) = ${(cfg.vals[kk]||0).toFixed(4)}`;if(cfg.over){const o=cfg.over[kk];t+=`   ·   binomial: ${o==null?'0 (k > n)':o.toFixed(4)}`}
+      if(cfg.normal)t+=`   ·   normal curve: ${npdf(kk,cfg.normal.mu,cfg.normal.sd).toFixed(4)}`}
+    tip.textContent=t;tip.style.opacity=1;tip.style.left=(e.clientX+14)+'px';tip.style.top=(e.clientY-34)+'px';
+    const r=tip.getBoundingClientRect();if(r.right>innerWidth-8)tip.style.left=(e.clientX-r.width-14)+'px'});
+  svg.addEventListener('mouseleave',()=>tip.style.opacity=0)});
+
+// ============================================================ tab 2 ===
+const WILD=[
+ {t:'Measurement error',w:'Repeated readings of a 100 Ω resistor on a bench meter',
+  why:'Each reading is the true value plus many small disturbances: contact resistance, drift, electrical noise, rounding. This is Gauss’s “law of errors”.',
+  mu:100,sd:0.05,u:'Ω',q:'P(99.9 < X < 100.1)'},
+ {t:'Machined parts',w:'Diameters of shafts turned on a lathe',
+  why:'Tool wear, temperature, vibration and the material each nudge the size a little, independently.',
+  mu:25,sd:0.02,u:'mm',q:'P(24.97 < X < 25.03)'},
+ {t:'Concrete strength',w:'28-day cube strength of one concrete mix',
+  why:'Water, cement, curing and compaction vary from batch to batch. Design uses the characteristic strength: the value only 5% of cubes fall below.',
+  mu:40,sd:4,u:'MPa',q:'P(X < x) = 0.05'},
+ {t:'Thermal noise',w:'Voltage across a 1 kΩ resistor at 300 K, 10 kHz bandwidth',
+  why:'The sum of the random motions of an enormous number of electrons. Its size is σ = √(4kTRB) ≈ 0.41 µV.',
+  mu:0,sd:0.41,u:'µV',q:'P(X > 1)'},
+ {t:'Gas molecules',w:'One velocity component of a nitrogen molecule at 300 K',
+  why:'Endless collisions randomise each component (Maxwell–Boltzmann), with σ = √(kT/m) ≈ 298 m/s.',
+  mu:0,sd:298,u:'m/s',q:'P(X > 500)'},
+ {t:'Brownian motion',w:'Drift of a 1 µm bead in water after 1 s, along one axis',
+  why:'Millions of molecular kicks add up (Einstein, 1905). The variance is 2Dt, giving σ ≈ 0.93 µm at 20 °C.',
+  mu:0,sd:0.93,u:'µm',q:'P(-1 < X < 1)'},
+ {t:'Photon counts',w:'Photons reaching one camera pixel: Poisson with λ = 10,000',
+  why:'A Poisson count with a large λ is close to N(λ, λ), so σ = √10,000 = 100. This is the SU7 → SU8 bridge.',
+  mu:10000,sd:100,u:'photons',q:'P(X < 9800)'},
+ {t:'Human height',w:'Adult height for one sex (illustrative numbers)',
+  why:'Hundreds of genes, plus nutrition, each add a little.',
+  mu:170,sd:7,u:'cm',q:'P(X > 185)'},
+];
+function buildCards(){
+  let h='';
+  WILD.forEach((c,i)=>{h+=`<div class="wc"><h3>${c.t}</h3><div class="w">${c.w}</div>`+
+    `<div class="why">${c.why}</div><div class="tag">μ = ${fx(c.mu)} ${c.u}, &nbsp;σ = ${fx(c.sd)} ${c.u}</div>`+
+    `<button data-card="${i}">Try ${esc(c.q)} →</button></div>`});
+  h+=`<div class="wc alt"><h3>Same curve, not a probability</h3><div class="why">Anything that spreads by diffusion takes the Gaussian shape:</div>`+
+     `<ul><li>a laser beam’s cross-section</li><li>heat spreading out from a brief hot spot</li><li>dopant atoms diffused into silicon</li></ul>`+
+     `<div class="why">Same bell curve, but it describes intensity or concentration, not probability.</div></div>`;
+  h+=`<div class="wc alt"><h3>Not everything is normal</h3><ul>`+
+     `<li><b>Time between Poisson events</b>: exponential, skewed</li>`+
+     `<li><b>Wind speed</b>: Weibull</li>`+
+     `<li><b>Particle sizes, incomes</b>: log-normal, because the effects multiply instead of add</li>`+
+     `<li><b>Earthquakes, market crashes</b>: heavy tails; extremes are far more common than a normal curve predicts</li></ul></div>`;
+  $('cards').innerHTML=h;
+  document.querySelectorAll('[data-card]').forEach(b=>b.addEventListener('click',()=>{
+    const c=WILD[+b.dataset.card];Q.mu=c.mu;Q.sd=c.sd;Q.u=c.u;Q.q=c.q;syncQ();showTab('prob')}));
+}
+
+const SRC={coin:{name:'coin flips',m:0.5,v:0.25,disc:true,draw:()=>Math.random()<0.5?1:0},
+  die:{name:'die rolls',m:3.5,v:35/12,disc:true,draw:()=>1+Math.floor(Math.random()*6)},
+  uni:{name:'uniform amounts',m:0.5,v:1/12,disc:false,draw:()=>Math.random()},
+  exp:{name:'skewed amounts',m:1,v:1,disc:false,draw:()=>-Math.log(1-Math.random())}};
+let CL=null;
+function sampleCLT(){
+  const src=SRC[$('src').value],k=+$('ks').value,M=20000,xs=new Float64Array(M);
+  for(let j=0;j<M;j++){let s=0;for(let i=0;i<k;i++)s+=src.draw();xs[j]=s}
+  CL={src,k,xs,M,mean:k*src.m,sd:Math.sqrt(k*src.v)};
+}
+function drawCLT(){
+  if(!CL)sampleCLT();
+  const svg=$('cltp'),[W,H]=size(svg),fs=rem(),{src,k,xs,M,mean,sd}=CL;
+  const L=fs*0.6,R=fs*0.6,Tp=fs*0.8,B=fs*1.8;
+  let lo=mean-4.2*sd,hi=mean+4.2*sd,w,start,nb;
+  if(src.disc){w=Math.max(1,Math.round(8.4*sd/40));start=Math.floor(lo)-0.5;nb=Math.ceil((hi-start)/w)}
+  else{nb=44;w=(hi-lo)/nb;start=lo}
+  const cnt=new Array(nb).fill(0);for(const x of xs){const b=Math.floor((x-start)/w);if(b>=0&&b<nb)cnt[b]++}
+  const dens=cnt.map(c=>c/(M*w)),peak=Math.max(...dens,1/(sd*SQ2PI))*1.08;
+  const X=x=>L+(x-start)/(nb*w)*(W-L-R),Y=v=>Tp+(H-Tp-B)*(1-v/peak);
+  let s='';
+  dens.forEach((d,i)=>{if(d>0){const x0=X(start+i*w),x1=X(start+(i+1)*w);s+=`<rect x="${(x0+0.5).toFixed(1)}" y="${Y(d).toFixed(1)}" width="${Math.max(0.5,x1-x0-1).toFixed(1)}" height="${(Y(0)-Y(d)).toFixed(1)}" fill="#b9cdee"/>`}});
+  let dd='';for(let i=0;i<=200;i++){const x=start+nb*w*i/200;dd+=(i?'L':'M')+X(x).toFixed(1)+','+Y(npdf(x,mean,sd)).toFixed(1)}
+  s+=`<path d="${dd}" fill="none" stroke="${VIO}" stroke-width="2.6"/>`;
+  s+=`<line class="axis" x1="${L}" x2="${W-R}" y1="${Y(0)}" y2="${Y(0)}"/>`;
+  const st=niceStep((nb*w)/5);for(let t=Math.ceil(start/st)*st;t<=start+nb*w;t+=st)s+=`<text class="xtick" x="${X(t)}" y="${Y(0)+fs*1.2}">${fx(t)}</text>`;
+  svg.innerHTML=s;
+  $('kv').textContent=k===1?'1 effect':k+' effects';
+  $('cltc').innerHTML=`Sum of ${k} ${src.name}: mean ${fx(mean)}, SD ${fx(Math.round(sd*1000)/1000)}. Bars: 20,000 simulated sums. Violet: the normal curve with the same mean and SD.`;
+}
+$('src').addEventListener('change',()=>{sampleCLT();drawCLT()});
+$('ks').addEventListener('input',()=>{sampleCLT();drawCLT()});
+$('rs').addEventListener('click',()=>{sampleCLT();drawCLT()});
+
+// ============================================================ tab 3 ===
+const Z={neg:true,z:-2.53,note:''};
+function tcell(z){
+  const zr=Math.round(z*100)/100,h=Math.round(Math.abs(zr)*100);
+  return {zr,neg:zr<0,r:Math.floor(h/10),c:h%10,beyond:h>399,val:h>399?(zr<0?0:1):Math.round(Phi(zr)*1e5)/1e5};
+}
+function rowLabel(neg,r){return (neg?'−':'')+(r/10).toFixed(1)}
+function zTable(neg,rows,hit,clickable){
+  const on=hit&&!hit.beyond&&hit.neg===neg;
+  let h='<table class="z"><thead><tr><th>z</th>';
+  for(let c=0;c<10;c++)h+=`<th class="${on&&hit.c===c?'hit':''}">.0${c}</th>`;
+  h+='</tr></thead><tbody>';
+  rows.forEach(r=>{
+    const rowOn=on&&hit.r===r,sep=neg?(r%5===0&&r>0):(r%5===4&&r<39);
+    h+=`<tr class="${sep?'sep':''}"><th class="${rowOn?'hl rb':''}">${rowOn?'→ ':''}${rowLabel(neg,r)}</th>`;
+    for(let c=0;c<10;c++){
+      const z=(neg?-1:1)*(r/10+c/100),cls=rowOn&&hit.c===c?'hit':(rowOn?'rb':(on&&hit.c===c?'cb':''));
+      h+=`<td class="${cls}"${clickable?` data-z="${z.toFixed(2)}"`:''}>${ft(Phi(z))}</td>`;
+    }
+    h+='</tr>';
+  });
+  return h+'</tbody></table>';
+}
+function zRows(neg){const a=[];for(let r=0;r<40;r++)a.push(r);return neg?a.reverse():a}
+
+function drawNormal(svg,o){                         // o: {mu, sd, regions:[[a,b]], marks:[{x,lab}], units, std}
+  const [W,H]=size(svg),fs=rem();
+  const L=fs*3.2,R=fs*1.2,Tp=fs*2.4,B=o.std?fs*2.4:fs*3.6;
+  let lo=o.mu-4*o.sd,hi=o.mu+4*o.sd;
+  (o.marks||[]).forEach(m=>{if(isFinite(m.x)){lo=Math.min(lo,m.x-0.7*o.sd);hi=Math.max(hi,m.x+0.7*o.sd)}});
+  lo=Math.max(lo,o.mu-7*o.sd);hi=Math.min(hi,o.mu+7*o.sd);
+  const peak=1/(o.sd*SQ2PI),X=x=>L+(x-lo)/(hi-lo)*(W-L-R),Y=v=>Tp+(H-Tp-B)*(1-v/(peak*1.06)),y0=Y(0);
+  const curve=(a,b,n)=>{let p=[];for(let i=0;i<=n;i++){const x=a+(b-a)*i/n;p.push(X(x).toFixed(1)+','+Y(npdf(x,o.mu,o.sd)).toFixed(1))}return p};
+  let s='';
+  (o.regions||[]).forEach(([a,b])=>{const a2=Math.max(a,lo),b2=Math.min(b,hi);if(b2>a2){
+    s+=`<polygon points="${X(a2).toFixed(1)},${y0} ${curve(a2,b2,160).join(' ')} ${X(b2).toFixed(1)},${y0}" fill="#f6b9bb" opacity="0.85"/>`}});
+  s+=`<polyline points="${curve(lo,hi,300).join(' ')}" fill="none" stroke="${o.color||VIO}" stroke-width="2.6"/>`;
+  s+=`<line x1="${X(o.mu)}" x2="${X(o.mu)}" y1="${Y(peak)}" y2="${y0}" stroke="#9aa0ad" stroke-dasharray="4 4"/>`;
+  s+=`<line class="axis" x1="${L}" x2="${W-R}" y1="${y0}" y2="${y0}"/>`;
+  for(let kk=-7;kk<=7;kk++){const x=o.mu+kk*o.sd;if(x<lo-1e-9||x>hi+1e-9)continue;
+    s+=`<line x1="${X(x)}" x2="${X(x)}" y1="${y0}" y2="${y0+fs*0.35}" stroke="#9aa0ad"/>`;
+    if(o.std)s+=`<text class="xtick" x="${X(x)}" y="${y0+fs*1.3}">${minus(kk)}</text>`;
+    else s+=`<text class="xtick" x="${X(x)}" y="${y0+fs*1.3}">${fx(x)}</text><text class="ztick" x="${X(x)}" y="${y0+fs*2.5}">${minus(kk)}</text>`}
+  s+=`<text class="lbl" x="${W-R}" y="${y0-fs*0.5}" text-anchor="end">${o.std?'z':'x'+(o.units?' ('+esc(o.units)+')':'')}</text>`;
+  if(!o.std)s+=`<text class="ztick" x="${L-fs*1.4}" y="${y0+fs*2.5}" text-anchor="end">z</text>`;
+  const ms=(o.marks||[]).filter(m=>isFinite(m.x)&&m.x>=lo&&m.x<=hi);
+  ms.forEach((m,i)=>{const xx=X(m.x),anchor=ms.length===2?(i===0?'end':'start'):(xx>W*0.8?'end':xx<W*0.2?'start':'middle'),dx=anchor==='end'?-fs*0.3:anchor==='start'?fs*0.3:0;
+    s+=`<line x1="${xx}" x2="${xx}" y1="${y0}" y2="${Tp-fs*0.4}" stroke="${HIT}" stroke-width="2"/>`+
+       `<text class="mk" x="${xx+dx}" y="${Tp-fs*0.9}" text-anchor="${anchor}">${m.lab}</text>`});
+  svg.innerHTML=s;
+}
+
+function zUpdate(){
+  const T0=tcell(Z.z);Z.neg=T0.neg;
+  $('zneg').classList.toggle('on',Z.neg);$('zpos').classList.toggle('on',!Z.neg);
+  $('ztbl').innerHTML=zTable(Z.neg,zRows(Z.neg),T0,true);
+  const box=$('ztbl'),hc=box.querySelector('td.hit');
+  if(hc)box.scrollTop+=hc.getBoundingClientRect().top-box.getBoundingClientRect().top-box.clientHeight/2;
+  const zs=fz(T0.zr),v=T0.val;
+  $('zres').innerHTML=T0.beyond?`z = ${zs} is off the table: Φ(${zs}) ≈ ${T0.zr<0?'0':'1'}`:
+    `Φ(${zs}) = P(Z ≤ ${zs}) = <span class="p">${ft(v)}</span>${Z.note?` <span class="note" style="font-family:'Segoe UI';font-size:0.9rem;font-weight:400">${Z.note}</span>`:''}`;
+  drawNormal($('zplot'),{mu:0,sd:1,std:true,regions:[[-Infinity,T0.zr]],marks:[{x:T0.zr,lab:`z = ${zs}`}]});
+  if(T0.beyond){$('zread').innerHTML='<h4>Off the table</h4>The table stops at |z| = 3.99. Beyond that the area is within 0.00003 of 0 or 1.';$('zmore').innerHTML='';return}
+  const rl=rowLabel(T0.neg,T0.r),cd=`.0${T0.c}`,a=(T0.r/10).toFixed(1),cdig=`0.0${T0.c}`;
+  let rd=`<h4>How to read it</h4><div>Row <b class="m">${rl}</b>: the sign and the first decimal.</div>`+
+    `<div>Column <b class="m">${cd}</b>: the second decimal`;
+  if(T0.neg){
+    rd+=`, which carries the row's sign:</div><div class="m">${zs} = (−${a}) + (−${cdig})</div>`;
+    if(T0.c>0){const wrong=-(T0.r/10)+T0.c/100;rd+=`<div class="bad">Not −${a} + ${cdig} = ${fz(wrong)}: that is a different cell, ${ft(Phi(Math.round(wrong*100)/100))}.</div>`}
+  }else rd+=`:</div><div class="m">${zs} = ${a} + ${cdig}</div>`;
+  rd+=`<div style="margin-top:0.3rem">Moving right along a row always moves z away from 0.</div>`;
+  $('zread').innerHTML=rd;
+  const az=Math.abs(T0.zr),pm=Math.round(Phi(-az)*1e5)/1e5;
+  $('zmore').innerHTML=`<h4>Other areas from the same cell</h4>`+
+    `<div class="m">P(Z &gt; ${zs}) = 1 − Φ(${zs}) = ${ft(Math.round((1-v)*1e5)/1e5)}</div>`+
+    `<div class="m">Φ(${fz(-T0.zr)}) = 1 − Φ(${zs}) = ${ft(Math.round((1-v)*1e5)/1e5)}</div>`+
+    `<div class="m">P(−${az.toFixed(2)} &lt; Z &lt; ${az.toFixed(2)}) = 1 − 2Φ(−${az.toFixed(2)}) = ${ft(Math.max(0,Math.round((1-2*pm)*1e5)/1e5))}</div>`+
+    `<div style="margin-top:0.3rem">The curve is symmetric, so Φ(−z) = 1 − Φ(z): one half of the table gives the other.</div>`;
+}
+function readNum(s){s=String(s).trim().replace(/[−–—]/g,'-');if(!/^[-+]?(\d+\.?\d*|\.\d+)$/.test(s))return NaN;return parseFloat(s)}
+$('zz').addEventListener('input',e=>{const v=readNum(e.target.value);if(isFinite(v)){Z.z=v;Z.note='';$('za').value='';zUpdate()}});
+$('za').addEventListener('input',e=>{const p=readNum(e.target.value);if(isFinite(p)&&p>0&&p<1){
+  const zt=PhiInv(p),zr=Math.max(-3.99,Math.min(3.99,Math.round(zt*100)/100));Z.z=zr;
+  Z.note=`(closest table area to ${e.target.value.trim()}; exact z = ${minus(zt.toFixed(4))})`;$('zz').value=minus(zr.toFixed(2));zUpdate()}});
+$('ztbl').addEventListener('click',e=>{const td=e.target.closest('td');if(td&&td.dataset.z!=null){Z.z=+td.dataset.z;Z.note='';$('zz').value=minus(fz(Z.z));$('za').value='';zUpdate()}});
+$('zneg').addEventListener('click',()=>{if(!Z.neg){Z.z=-Math.abs(Z.z)||-0.01;$('zz').value=fz(Z.z);Z.note='';zUpdate()}});
+$('zpos').addEventListener('click',()=>{if(Z.neg){Z.z=Math.abs(Z.z);$('zz').value=fz(Z.z);Z.note='';zUpdate()}});
+
+// ============================================================ tab 4 ===
+const Q={mu:36,sd:6,u:'',q:'P(X < 21)'};
+function syncQ(){$('qmu').value=fx(Q.mu).replace('−','-');$('qsd').value=fx(Q.sd);$('qu').value=Q.u;$('qin').value=Q.q}
+function flip(op){return {'<':'>','>':'<','<=':'>=','>=':'<=','=':'='}[op]}
+function ev(e,mu,sd){
+  let s=e.replace(/(\d|\))(mu|sigma|sd|\()/g,'$1*$2').replace(/mu/g,`(${mu})`).replace(/sigma|sd/g,`(${sd})`);
+  if(!/^[0-9.+\-*/()]+$/.test(s))throw `I can't read “${minus(e)}” as a number.`;
+  let v;try{v=Function(`"use strict";return (${s})`)()}catch(err){throw `I can't read “${minus(e)}” as a number.`}
+  if(typeof v!=='number'||!isFinite(v))throw `I can't read “${minus(e)}” as a number.`;
+  return v;
+}
+function parseQ(raw,mu,sd){
+  let s=raw.trim().replace(/[−–—]/g,'-').replace(/≤/g,'<=').replace(/≥/g,'>=').replace(/[×·]/g,'*')
+           .replace(/[µμ]/g,'mu').replace(/σ/g,'sigma').replace(/\s+/g,'');
+  let target=null,m;
+  if((m=s.match(/^(?:Pr|P|p)\((.*)\)=([0-9]*\.?[0-9]+)$/))){target=+m[2];s=m[1]}
+  else if((m=s.match(/^(?:Pr|P|p)\((.*)\)$/))){s=m[1]}
+  if(!s)throw 'Type a question, for example P(30 < X < 42).';
+  if(target!=null&&!(target>0&&target<1))throw 'The probability after “=” must be between 0 and 1.';
+  const isVar=t=>/^[A-Z]$/.test(t),isUnk=t=>/^[a-z][a-z0-9]*$/.test(t)&&!/^(mu|sigma|sd)$/.test(t);
+  const num=t=>ev(t,mu,sd);
+  if((m=s.match(/^\|([A-Z])([+-].+)?\|(<=|<|>=|>)(.+)$/))){
+    const V=m[1],a=m[2]?-num(m[2]):0;
+    if(target!=null){if(!isUnk(m[4]))throw 'For “= p” questions, leave the unknown as a letter, e.g. P(|X − μ| < c) = 0.95.';
+      if(m[3][0]!=='<')throw 'Use P(|X − μ| < c) = p.';return {kind:'invAbs',V,a,op:m[3],target}}
+    const c=num(m[4]);if(c<=0)throw 'The distance after < or > must be positive.';
+    return {kind:m[3][0]==='<'?'within':'outside',V,a,c,op:m[3]};
+  }
+  const parts=s.split(/(<=|>=|<|>|=)/);
+  if(parts.length===3){
+    let [L,op,R]=parts;
+    if(isVar(R)&&!isVar(L)){[L,R]=[R,L];op=flip(op)}
+    if(!isVar(L))throw 'Put a capital letter for the random variable, e.g. P(X < 21) or P(Z > 1.5).';
+    if(target!=null){if(!isUnk(R))throw 'For “= p” questions, leave the unknown as a letter, e.g. P(X < x) = 0.95.';
+      if(op==='=')throw 'P(X = x) is 0 for a continuous X, so it cannot equal '+target+'.';
+      return {kind:op[0]==='<'?'invLeft':'invRight',V:L,op,target}}
+    if(op==='=')return {kind:'point',V:L,a:num(R),op};
+    return {kind:op[0]==='<'?'left':'right',V:L,a:num(R),op};
+  }
+  if(parts.length===5){
+    const [a,o1,Vv,o2,b]=parts;
+    if(!isVar(Vv))throw 'Write a two-sided question as P(a < X < b).';
+    if(o1[0]==='<'&&o2[0]==='<'){const A=num(a),Bv=num(b);if(A>=Bv)throw 'In P(a < X < b), a must be smaller than b.';return {kind:'between',V:Vv,a:A,b:Bv,o1,o2}}
+    if(o1[0]==='>'&&o2[0]==='>'){const A=num(b),Bv=num(a);if(A>=Bv)throw 'In P(b > X > a), b must be larger than a.';return {kind:'between',V:Vv,a:A,b:Bv,o1:flip(o2),o2:flip(o1)}}
+    throw 'The two signs must point the same way, e.g. P(a < X < b).';
+  }
+  throw 'I can read P(X < a), P(X > a), P(a < X < b), P(|X − a| < c), P(X < x) = p, P(X > x) = p and P(|X − μ| < c) = p.';
+}
+
+const OPS={'<':'&lt;','<=':'≤','>':'&gt;','>=':'≥','=':'='};
+function stdLine(V,x,mu,sd,tc,unit){
+  const z=(x-mu)/sd,rounded=Math.abs(z-tc.zr)>1e-9;
+  if(V==='Z')return `<li>${V} is already standard normal, so z = ${fz(tc.zr)}${rounded?` (from ${minus(+z.toFixed(4))}, rounded to 2 decimals for the table)`:''}</li>`;
+  return `<li>Standardise: z = (x − μ)/σ = (${fx(x)} − ${fx(mu)})/${fx(sd)} = ${rounded?minus(+z.toFixed(4))+' ≈ ':''}${fz(tc.zr)}`+
+    `${rounded?' <span class="sm">(the table uses 2 decimals)</span>':''}</li>`;
+}
+function lookLine(tc){
+  if(tc.beyond)return `<li>|z| &gt; 3.99 is off the table: Φ(${fz(tc.zr)}) ≈ ${tc.zr<0?'0':'1'}</li>`;
+  return `<li>Table: Φ(${fz(tc.zr)}) = ${ft(tc.val)} <span class="sm">(row ${rowLabel(tc.neg,tc.r)}, column .0${tc.c})</span></li>`;
+}
+function excerpt(tc){
+  if(tc.beyond)return '';
+  const rows=zRows(tc.neg),i=rows.indexOf(tc.r),sub=rows.slice(Math.max(0,i-1),Math.min(rows.length,i+2));
+  return `<div class="excerpt">${zTable(tc.neg,sub,tc,false)}</div>`;
+}
+const r5=v=>Math.round(v*1e5)/1e5;
+const absS=(V,a)=>a===0?`|${V}|`:a<0?`|${V} + ${fx(-a)}|`:`|${V} − ${fx(a)}|`;
+
+function solve(){
+  const err=$('qerr');err.textContent='';
+  const mu=readNum($('qmu').value),sd=readNum($('qsd').value);
+  Q.q=$('qin').value;Q.u=$('qu').value.trim();
+  if(!isFinite(mu)){err.textContent='Enter a number for μ.';return}
+  if(!isFinite(sd)||sd<=0){err.textContent='σ must be a positive number.';return}
+  Q.mu=mu;Q.sd=sd;
+  let P;try{P=parseQ(Q.q,mu,sd)}catch(e){err.textContent=typeof e==='string'?e:'I could not read that question.';return}
+  const std=P.V==='Z',m0=std?0:mu,s0=std?1:sd,V=P.V,u=std?'':Q.u,ux=u?' '+esc(u):'';
+  const dist=std?`<li>Z ~ N(0, 1): the standard normal, μ = 0, σ = 1</li>`:`<li>${V} ~ N(μ = ${fx(mu)}, σ² = ${fx(sd)}²)${u?' <span class="sm">('+esc(u)+')</span>':''}</li>`;
+  let steps=[dist],tabs=[],res='',regions=[],marks=[],notes=[];
+  const mark=(x,tc,zl)=>({x,lab:`${std?'z':'x'} = ${fx(x)}${std?'':' (z = '+(zl||fz(tc.zr))+')'}`});
+  const tag=(t)=>`<span class="bx">${t}</span>`;
+  if(P.kind==='left'||P.kind==='right'){
+    const tc=tcell((P.a-m0)/s0),q=`P(${V} ${OPS[P.op]} ${fx(P.a)})`;
+    steps.push(stdLine(V,P.a,m0,s0,tc,u),lookLine(tc));
+    if(P.kind==='left'){const p=tc.val;steps.push(`<li>${q} = Φ(${fz(tc.zr)}) = ${tag(fpr(p))}</li>`);res=`${q} = ${fpr(p)}`;regions=[[-Infinity,P.a]];
+      if(Math.abs(Phi((P.a-m0)/s0)-p)>5e-6)notes.push(`Without rounding z: ${fpr(Phi((P.a-m0)/s0))}`)}
+    else{const p=r5(1-tc.val);steps.push(`<li>Area to the right = 1 − area to the left:<br>${q} = 1 − Φ(${fz(tc.zr)}) = 1 − ${ft(tc.val)} = ${tag(fpr(p))}</li>`);res=`${q} = ${fpr(p)}`;regions=[[P.a,Infinity]];
+      if(Math.abs(1-Phi((P.a-m0)/s0)-p)>5e-6)notes.push(`Without rounding z: ${fpr(1-Phi((P.a-m0)/s0))}`)}
+    marks=[mark(P.a,tc)];tabs=[tc];
+    if(P.op.includes('='))notes.push(`≤ and &lt; give the same answer for a continuous ${V}: a single point has no area.`);
+  }
+  else if(P.kind==='between'||P.kind==='within'||P.kind==='outside'){
+    const a=P.kind==='between'?P.a:P.a-P.c,b=P.kind==='between'?P.b:P.a+P.c;
+    const t1=tcell((a-m0)/s0),t2=tcell((b-m0)/s0);
+    if(P.kind!=='between')steps.push(`<li>${absS(V,P.a)} ${OPS[P.op]} ${fx(P.c)} means ${P.kind==='within'?`${fx(a)} ${OPS[P.op]} ${V} ${OPS[P.op]} ${fx(b)}`:`${V} ${OPS[flip(P.op)]} ${fx(a)} or ${V} ${OPS[P.op]} ${fx(b)}`}</li>`);
+    steps.push(stdLine(V,a,m0,s0,t1,u).replace('z =','z₁ ='),stdLine(V,b,m0,s0,t2,u).replace('z =','z₂ ='),lookLine(t1),lookLine(t2));
+    const ex1=Phi((a-m0)/s0),ex2=Phi((b-m0)/s0);
+    if(P.kind==='outside'){
+      const p=r5(t1.val+1-t2.val),q=`P(${absS(V,P.a)} ${OPS[P.op]} ${fx(P.c)})`;
+      steps.push(`<li>Two tails: ${q} = Φ(${fz(t1.zr)}) + 1 − Φ(${fz(t2.zr)}) = ${ft(t1.val)} + 1 − ${ft(t2.val)} = ${tag(fpr(p))}</li>`);
+      res=`${q} = ${fpr(p)}`;regions=[[-Infinity,a],[b,Infinity]];if(Math.abs(ex1+1-ex2-p)>5e-6)notes.push(`Without rounding z: ${fpr(ex1+1-ex2)}`);
+    }else{
+      const p=r5(t2.val-t1.val),q=P.kind==='between'?`P(${fx(a)} ${OPS[P.o1]} ${V} ${OPS[P.o2]} ${fx(b)})`:`P(${absS(V,P.a)} ${OPS[P.op]} ${fx(P.c)})`;
+      steps.push(`<li>Area between = area left of z₂ − area left of z₁:<br>${q} = Φ(${fz(t2.zr)}) − Φ(${fz(t1.zr)}) = ${ft(t2.val)} − ${ft(t1.val)} = ${tag(fpr(p))}</li>`);
+      res=`${q} = ${fpr(p)}`;regions=[[a,b]];if(Math.abs(ex2-ex1-p)>5e-6)notes.push(`Without rounding z: ${fpr(ex2-ex1)}`);
+      const k=(b-a)/2/s0;if(Math.abs(a+b-2*m0)<1e-9*Math.max(1,Math.abs(m0))&&[1,2,3].some(j=>Math.abs(k-j)<1e-9))
+        notes.push(`Within ${k}σ of the mean: the 68–95–99.7 rule says about ${['68','95','99.7'][k-1]}%.`);
+    }
+    marks=[mark(a,t1),mark(b,t2)];tabs=[t1,t2];
+  }
+  else if(P.kind==='point'){
+    steps.push(`<li>${V} is continuous: a single value has no width, so no area under the curve.</li>`,`<li>P(${V} = ${fx(P.a)}) = ${tag('0')}</li>`);
+    res=`P(${V} = ${fx(P.a)}) = 0`;marks=[{x:P.a,lab:`${std?'z':'x'} = ${fx(P.a)}`}];
+    notes.push(`Ask instead for a short interval, e.g. P(${fx(P.a-0.5*s0/5)} &lt; ${V} &lt; ${fx(P.a+0.5*s0/5)}).`);
+  }
+  else{                                             // inverse: find x (or c) for a given probability
+    let left,phrase;
+    if(P.kind==='invLeft'){left=P.target;phrase=`P(${V} ${OPS[P.op]} x) = ${P.target} means Φ(z) = ${P.target}`}
+    else if(P.kind==='invRight'){left=1-P.target;phrase=`P(${V} ${OPS[P.op]} x) = ${P.target} means the area to the left is 1 − ${P.target}, so Φ(z) = ${+left.toFixed(6)}`}
+    else{if(!std&&Math.abs(P.a-mu)>1e-9*Math.max(1,Math.abs(mu))){err.textContent='For P(|X − a| < c) = p, a must be the mean μ.';return}
+      left=(1+P.target)/2;phrase=`The middle area is ${P.target}, so each tail has ${+((1-P.target)/2).toFixed(6)} and Φ(z) = ${+left.toFixed(6)}`}
+    const zt=PhiInv(left),zlo=Math.floor(zt*100)/100,zhi=zlo+0.01,tc=tcell(zt);
+    steps.push(`<li>${phrase}</li>`);
+    if(Math.abs(zt)<3.99)steps.push(`<li>Look for ${ft(left)} <i>inside</i> the table: it lies between ${ft(Phi(zlo))} (z = ${fz(zlo)}) and ${ft(Phi(zhi))} (z = ${fz(zhi)}), so z ≈ ${minus(zt.toFixed(3))}</li>`);
+    else steps.push(`<li>That area is off the table: z ≈ ${minus(zt.toFixed(3))}</li>`);
+    const zz=+zt.toFixed(3);
+    if(P.kind==='invAbs'){const c=zz*s0;
+      steps.push(std?`<li>c = z = ${tag(fx(c))}</li>`:`<li>c = zσ = ${zz} × ${fx(s0)} = ${tag(fx(c)+ux)}</li>`);
+      res=`c = ${fx(c)}${ux}`;regions=[[m0-c,m0+c]];marks=[mark(m0-c,null,minus(-zz)),mark(m0+c,null,minus(zz))];
+    }else{const x=m0+zz*s0;
+      steps.push(std?`<li>z = ${tag(minus(zz))}</li>`:`<li>Un-standardise: x = μ + zσ = ${fx(m0)} + (${minus(zz)}) × ${fx(s0)} = ${tag(fx(x)+ux)}</li>`);
+      res=`${std?'z':'x'} = ${fx(x)}${ux}`;regions=P.kind==='invLeft'?[[-Infinity,x]]:[[x,Infinity]];marks=[mark(x,null,minus(zz))];
+      if(Q.u==='MPa'&&P.target===0.05&&P.kind==='invLeft')notes.push('This is the concrete’s characteristic strength: μ − 1.645σ.');
+    }
+    tabs=[tc];
+  }
+  $('qres').innerHTML=res.replace(/([=≈])\s*([^=]*)$/,'$1 <span class="p">$2</span>');
+  drawNormal($('qplot'),{mu:m0,sd:s0,std,units:u,regions,marks});
+  let h=`<h4>Working</h4><ol>${steps.join('')}</ol>`;
+  if(notes.length)h+=notes.map(n=>`<div class="note" style="margin:0.15rem 0">${n}</div>`).join('');
+  if(tabs.length){h+=`<h4>Table cells used</h4>`;tabs.forEach(tc=>h+=excerpt(tc))}
+  $('qsteps').innerHTML=h;
+}
+$('go').addEventListener('click',solve);
+$('qin').addEventListener('keydown',e=>{if(e.key==='Enter')solve()});
+['qmu','qsd','qu'].forEach(id=>$(id).addEventListener('keydown',e=>{if(e.key==='Enter')solve()}));
+document.querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{$('qin').value=b.textContent;solve()}));
+$('fromlam').addEventListener('click',()=>{const lam=S.n*S.p;Q.mu=Math.round(lam*1e4)/1e4;Q.sd=Math.round(Math.sqrt(lam)*1e4)/1e4;Q.u='';
+  $('qmu').value=Q.mu;$('qsd').value=Q.sd;$('qu').value='';solve()});
+
+// ============================================================== tabs ===
+let tab='dist';
+const KEYS={
+  dist:'Keys: <kbd>←</kbd><kbd>→</kbd> n &nbsp; <kbd>↑</kbd><kbd>↓</kbd> p &nbsp; <kbd>L</kbd> keep λ &nbsp; <kbd>P</kbd> n → ∞ &nbsp; <kbd>G</kbd> λ → large &nbsp; <kbd>N</kbd> normal curve &nbsp; <kbd>R</kbd> run again &nbsp; <kbd>V</kbd> values &nbsp; <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> presets &nbsp; <kbd>F</kbd> full screen &nbsp;·&nbsp; hover a bar for its probability',
+  wild:'Click a card’s question to solve it in Find a probability. Drag the slider to add up more effects.',
+  ztab:'Type a z (e.g. −2.53) or an area (e.g. 0.95), or click any cell. Rows: sign and first decimal. Columns: second decimal.',
+  prob:'Type a question and press Enter: P(X &lt; a), P(X &gt; a), P(a &lt; X &lt; b), P(|X − μ| &lt; c), P(X &lt; x) = p, P(X &gt; x) = p, P(Z &lt; z). μ and σ can be used in the numbers, e.g. P(X &gt; μ + 2σ).'
+};
+function renderTab(){if(tab==='dist')render();else if(tab==='wild')drawCLT();else if(tab==='ztab')zUpdate();else solve()}
+function showTab(t){
+  if(t!=='dist')stop();
+  tab=t;
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id==='v-'+t));
+  document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));
+  $('keys').innerHTML=KEYS[t];renderTab();
+}
+document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>showTab(b.dataset.tab)));
+function fullscreen(){if(document.fullscreenElement)document.exitFullscreen();else document.documentElement.requestFullscreen().catch(()=>{})}
+$('fsb').addEventListener('click',fullscreen);
+
+document.addEventListener('keydown',e=>{
+  if(e.ctrlKey||e.metaKey||e.altKey)return;
+  const tg=e.target,typing=(tg.tagName==='INPUT'&&!['range','checkbox'].includes(tg.type))||tg.tagName==='TEXTAREA'||tg.tagName==='SELECT';
+  if(typing)return;
+  const k=e.key.toLowerCase();
+  if(k==='f'){fullscreen();return e.preventDefault()}
+  if(tab!=='dist')return;
+  const onRange=tg.tagName==='INPUT'&&tg.type==='range';let hit=true;
+  if(!onRange&&k==='arrowright'){stop();setN(S.n+(e.shiftKey?10:1))}
+  else if(!onRange&&k==='arrowleft'){stop();setN(S.n-(e.shiftKey?10:1))}
+  else if(!onRange&&k==='arrowup'){stop();setP(S.p+(e.shiftKey?0.05:0.01))}
+  else if(!onRange&&k==='arrowdown'){stop();setP(S.p-(e.shiftKey?0.05:0.01))}
+  else if(k==='r'||k===' '){reroll()}
+  else if(k==='p'){play();return e.preventDefault()}
+  else if(k==='g'){grow();return e.preventDefault()}
+  else if(k==='n'){S.norm=!S.norm}
+  else if(k==='l'){S.lock=!S.lock;S.lam=S.n*S.p}
+  else if(k==='v'){S.vals=!S.vals}
+  else if(k==='1'||k==='2'||k==='3'){preset(+k);return e.preventDefault()}
+  else hit=false;
+  if(hit){e.preventDefault();render()}
+});
+
+function fromUrl(){
+  const q=new URLSearchParams(location.hash.slice(1)||location.search.slice(1));
+  if(q.has('n'))S.n=Math.min(NMAX,Math.max(1,Math.round(+q.get('n'))||1));
+  if(q.has('p'))setP(+q.get('p')||0.2);else S.lam=S.n*S.p;
+  if(q.get('lock')==='1')S.lock=true;
+  if(q.get('v')==='1')S.vals=true;
+  if(q.get('norm')==='1')S.norm=true;
+  if(q.has('mu'))Q.mu=+q.get('mu');
+  if(q.has('sd'))Q.sd=+q.get('sd');
+  if(q.has('u'))Q.u=q.get('u');
+  if(q.has('q'))Q.q=q.get('q');
+  if(q.has('z')){const z=readNum(q.get('z'));if(isFinite(z))Z.z=z}
+  if(q.has('k'))$('ks').value=q.get('k');
+  if(q.has('src'))$('src').value=q.get('src');
+  const t=q.get('tab');return ['dist','wild','ztab','prob'].includes(t)?t:'dist';
+}
+new ResizeObserver(()=>renderTab()).observe(document.body);
+reroll();buildCards();const t0=fromUrl();syncQ();$('zz').value=minus(fz(Z.z));showTab(t0);
+</script>
+</body>
+</html>
