@@ -1,0 +1,681 @@
+<!doctype html>
+<!-- Ride Logger (v2: added fuel-grade select, "full tank" marker for accurate economy, and a keep-screen-awake toggle). v1 left unchanged in index.html. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ride Logger</title>
+<style>
+  /* Offline ride logger — single file, no libraries, no network. Dark cockpit theme. */
+  :root{
+    --bg:#0a0c0f; --panel:#13171c; --panel2:#0f1318; --line:#232a33;
+    --fg:#f2f5f8; --dim:#8a93a0; --dim2:#5c6572;
+    --accent:#2fd27a; --accent2:#1f8f52; --warn:#f0a73a; --crit:#ef5a5a; --blue:#4aa8ff;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);}
+  button{font-family:inherit}
+  header{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:14px 16px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+  header .brand{font-weight:800;letter-spacing:1.5px;font-size:15px}
+  header .brand small{display:block;color:var(--dim2);font-weight:600;letter-spacing:2px;font-size:9px;margin-top:2px}
+  .nav{display:flex;gap:6px}
+  .nav button{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--dim);
+    border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;letter-spacing:.5px}
+  .nav button.on{color:var(--fg);border-color:var(--accent2);background:#0e1a12}
+  main{padding:14px 16px 28px;max-width:720px;margin:0 auto}
+  section{display:flex;flex-direction:column;gap:14px}
+  h2{margin:4px 0 0;font-size:18px;letter-spacing:.3px}
+  .sub{color:var(--dim);font-size:13px;line-height:1.5;margin:0}
+
+  .bigbtn{appearance:none;border:0;border-radius:16px;background:var(--accent);color:#04120a;
+    font-size:19px;font-weight:800;letter-spacing:.3px;padding:20px;display:flex;align-items:center;
+    justify-content:center;gap:10px;width:100%}
+  .bigbtn.stop{background:var(--crit);color:#160303}
+  .bigbtn:active{transform:translateY(1px)}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .row>*{flex:1;min-width:0}
+  .btn{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--fg);
+    border-radius:12px;padding:13px 14px;font-size:14px;font-weight:700;letter-spacing:.3px;text-align:center}
+  .btn.ghost{background:transparent;color:var(--dim)}
+  .btn.danger{color:var(--crit);border-color:#43242a;background:#190e10}
+  .btn.go{background:var(--accent);color:#04120a;border-color:transparent}
+
+  .stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .stats.two{grid-template-columns:1fr 1fr}
+  .cell{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:11px 12px;
+    display:flex;flex-direction:column;gap:5px;justify-content:center}
+  .cell .k{color:var(--dim);font-size:10px;letter-spacing:1.3px;text-transform:uppercase}
+  .cell .v{font-size:clamp(19px,6vw,26px);font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+  .cell .v small{font-size:.5em;color:var(--dim);font-weight:700;margin-left:3px}
+  .cell.hi .v{color:var(--warn)}
+
+  .speedwrap{background:var(--panel);border:1px solid var(--line);border-radius:18px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px 14px}
+  .speedwrap .val{font-size:clamp(66px,24vw,128px);font-weight:800;line-height:.86;font-variant-numeric:tabular-nums}
+  .speedwrap .unit{color:var(--dim);letter-spacing:3px;font-size:13px;margin-top:8px}
+
+  .list{display:flex;flex-direction:column;gap:8px}
+  .item{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;
+    display:flex;align-items:center;gap:12px;text-align:left;width:100%;color:inherit}
+  .item .main{flex:1;min-width:0}
+  .item .t{font-weight:700;font-size:15px}
+  .item .d{color:var(--dim);font-size:12px;margin-top:3px}
+  .item .r{text-align:right;font-variant-numeric:tabular-nums}
+  .item .r b{font-size:17px;font-weight:800}
+  .item .r span{display:block;color:var(--dim);font-size:11px;margin-top:2px}
+  .empty{color:var(--dim2);text-align:center;padding:26px 10px;font-size:13px;line-height:1.6;
+    border:1px dashed var(--line);border-radius:14px}
+
+  .foot{display:flex;justify-content:space-between;align-items:center;color:var(--dim);
+    font-size:11px;font-family:var(--mono);padding:2px}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--crit);margin-right:7px;vertical-align:-1px}
+  .dot.ok{background:var(--accent)} .dot.warn{background:var(--warn)}
+
+  svg.plot{width:100%;height:auto;display:block;background:var(--panel2);border:1px solid var(--line);border-radius:14px}
+  .caption{color:var(--dim2);font-size:11px;letter-spacing:.5px;text-transform:uppercase}
+
+  label.fld{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--dim);letter-spacing:.4px}
+  input[type=number],input[type=text]{appearance:none;background:var(--panel2);border:1px solid var(--line);
+    color:var(--fg);border-radius:12px;padding:14px;font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;
+    width:100%;font-family:var(--mono)}
+  select.sel{appearance:none;-webkit-appearance:none;background:var(--panel2);border:1px solid var(--line);
+    color:var(--fg);border-radius:12px;padding:14px;font-size:16px;font-weight:700;width:100%;font-family:var(--sans)}
+  label.chk{display:flex;flex-direction:row;align-items:center;gap:12px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:12px;padding:14px;font-size:14px;font-weight:700;color:var(--fg)}
+  label.chk input{width:24px;height:24px;accent-color:var(--accent);margin:0;flex:0 0 auto}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg button{appearance:none;border:0;background:var(--panel);color:var(--dim);padding:8px 14px;font-size:12px;font-weight:700}
+  .seg button.on{background:#0e1a12;color:var(--fg)}
+
+  /* modal */
+  .scrim{position:fixed;inset:0;background:rgba(3,5,8,.78);display:none;align-items:center;justify-content:center;
+    padding:22px;z-index:50}
+  .scrim.on{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:20px;width:100%;max-width:420px;
+    display:flex;flex-direction:column;gap:16px}
+  .modal h3{margin:0;font-size:19px}
+  .modal p{margin:0;color:var(--dim);font-size:13px;line-height:1.5}
+
+  .pill{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:999px;
+    padding:4px 10px;font-size:11px;color:var(--dim);letter-spacing:.5px}
+  .note{background:#12100a;border:1px solid #3a3115;color:#e7cf94;border-radius:12px;padding:11px 13px;font-size:12px;line-height:1.5}
+  textarea{width:100%;min-height:120px;background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+    border-radius:12px;padding:12px;font-family:var(--mono);font-size:12px}
+  .hide{display:none!important}
+  a{color:var(--blue)}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">RIDE LOG<small id="recBadge">OFFLINE · PHONE ONLY</small></div>
+  <div class="nav">
+    <button id="navTrips" class="on" data-scr="scr-trips">Rides</button>
+    <button id="navFuel" data-scr="scr-fuel">Fuel</button>
+  </div>
+</header>
+
+<main>
+  <!-- ===================== RIDES LIST ===================== -->
+  <section id="scr-trips">
+    <button class="bigbtn" id="startBtn">● &nbsp;Start ride</button>
+    <div class="stats three">
+      <div class="cell"><div class="k">Rides</div><div class="v" id="sumRides">0</div></div>
+      <div class="cell"><div class="k">Distance</div><div class="v" id="sumDist">0<small id="sumDistU">km</small></div></div>
+      <div class="cell"><div class="k">Economy</div><div class="v" id="sumEco">—<small>km/L</small></div></div>
+    </div>
+    <div>
+      <div class="caption" style="margin-bottom:8px">Saved rides</div>
+      <div class="list" id="tripList"></div>
+    </div>
+    <div class="row">
+      <button class="btn ghost" id="backupBtn">Back up data</button>
+      <button class="btn ghost" id="restoreBtn">Restore</button>
+    </div>
+    <details>
+      <summary class="caption" style="cursor:pointer">Settings</summary>
+      <div style="display:flex;flex-direction:column;gap:12px;margin-top:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <span class="sub">Distance unit</span>
+          <div class="seg" id="unitSeg"><button data-u="km" class="on">km</button><button data-u="mi">mi</button></div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <span class="sub">Phone mount</span>
+          <div class="seg" id="mountSeg"><button data-m="portrait" class="on">Portrait</button><button data-m="landscape">Landscape</button></div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <span class="sub">Keep screen on while recording</span>
+          <div class="seg" id="awakeSeg"><button data-a="on" class="on">On</button><button data-a="off">Off</button></div>
+        </div>
+        <p class="sub">Fuel volume is always in litres. Lean is read from the phone's tilt — mount it firmly to the bike and tap <b>Set upright</b> when stopped to zero it.</p>
+      </div>
+    </details>
+  </section>
+
+  <!-- ===================== RECORDING ===================== -->
+  <section id="scr-record" hidden>
+    <div class="speedwrap"><div class="val" id="rSpeed">0</div><div class="unit" id="rSpeedU">KM/H</div></div>
+    <div class="stats three">
+      <div class="cell" id="rLeanCell"><div class="k">Lean</div><div class="v" id="rLean">0°</div></div>
+      <div class="cell"><div class="k">G-force</div><div class="v" id="rG">1.0<small>g</small></div></div>
+      <div class="cell"><div class="k">Distance</div><div class="v" id="rDist">0.0<small id="rDistU">km</small></div></div>
+      <div class="cell"><div class="k">Time</div><div class="v" id="rTime">0:00</div></div>
+      <div class="cell"><div class="k">Max spd</div><div class="v" id="rMaxS">0</div></div>
+      <div class="cell"><div class="k">Max lean</div><div class="v" id="rMaxL">0°</div></div>
+    </div>
+    <div class="foot">
+      <span><span class="dot" id="gpsDot"></span><span id="gpsTxt">waiting for GPS…</span></span>
+      <span id="ptCount">0 pts</span>
+    </div>
+    <div class="row">
+      <button class="btn" id="calBtn">Set upright</button>
+    </div>
+    <button class="bigbtn stop" id="stopBtn">■ &nbsp;Stop &amp; save ride</button>
+  </section>
+
+  <!-- ===================== TRIP DETAIL ===================== -->
+  <section id="scr-trip" hidden>
+    <button class="btn ghost" id="tripBack" style="align-self:flex-start;flex:0">‹ Back to rides</button>
+    <h2 id="tripTitle">Ride</h2>
+    <p class="sub" id="tripWhen"></p>
+    <svg class="plot" id="route" viewBox="0 0 340 200" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="stats three" id="tripStats"></div>
+    <div><div class="caption" style="margin-bottom:6px">Speed</div><svg class="plot" id="chartSpeed" viewBox="0 0 340 110"></svg></div>
+    <div><div class="caption" style="margin-bottom:6px">Lean (L / R)</div><svg class="plot" id="chartLean" viewBox="0 0 340 110"></svg></div>
+    <div class="row">
+      <button class="btn go" id="shareGpx">Share GPX</button>
+      <button class="btn" id="copyCsv">Copy CSV</button>
+    </div>
+    <button class="btn danger" id="delTrip">Delete this ride</button>
+  </section>
+
+  <!-- ===================== FUEL ===================== -->
+  <section id="scr-fuel" hidden>
+    <h2>Fuel log</h2>
+    <p class="sub">Each time you fill up, enter the odometer reading and the litres you put in. For an exact figure, <b>fill the tank to full</b> and tick the box — economy is then measured tank-to-tank between full fills.</p>
+    <div class="stats three">
+      <div class="cell"><div class="k">Last fill</div><div class="v" id="fLast">—<small>km/L</small></div></div>
+      <div class="cell"><div class="k">Average</div><div class="v" id="fAvg">—<small>km/L</small></div></div>
+      <div class="cell"><div class="k">L/100<span id="fU2">km</span></div><div class="v" id="fL100">—</div></div>
+    </div>
+    <div class="cell" style="gap:12px">
+      <div class="row">
+        <label class="fld">Odometer now (<span class="fuU">km</span>)<input id="fuelOdo" type="number" inputmode="decimal" placeholder="e.g. 12840"></label>
+        <label class="fld">Litres filled<input id="fuelLit" type="number" inputmode="decimal" placeholder="e.g. 7.2"></label>
+      </div>
+      <label class="fld">Fuel grade
+        <select id="fuelGrade" class="sel">
+          <option>Shell V-Power</option>
+          <option>Shell V-Power Racing</option>
+          <option>Shell FuelSave 95</option>
+          <option>Shell FuelSave 98</option>
+          <option>Esso Synergy Supreme+ 98</option>
+          <option>Esso Synergy Extra 95</option>
+          <option>Caltex Platinum 98</option>
+          <option>Caltex Silver 95</option>
+          <option>Sinopec 95</option>
+          <option>Sinopec 98</option>
+          <option>Other</option>
+        </select>
+      </label>
+      <label class="fld">Price paid (optional)<input id="fuelPrice" type="number" inputmode="decimal" placeholder="e.g. 18.50"></label>
+      <label class="chk"><input type="checkbox" id="fuelFull" checked> Filled the tank to full</label>
+      <button class="btn go" id="fuelAdd">Add fill-up</button>
+    </div>
+    <div><div class="caption" style="margin-bottom:8px">Fill-ups</div><div class="list" id="fuelList"></div></div>
+  </section>
+</main>
+
+<!-- odometer prompt modal -->
+<div class="scrim" id="scrim">
+  <div class="modal">
+    <h3 id="mTitle">Odometer now</h3>
+    <p id="mSub">Read the number off your bike's dash.</p>
+    <label class="fld"><span id="mLabel">Odometer (km)</span><input id="mOdo" type="number" inputmode="decimal" placeholder="e.g. 12800"></label>
+    <div class="note" id="mNote" hidden></div>
+    <div class="row">
+      <button class="btn ghost" id="mCancel">Cancel</button>
+      <button class="btn go" id="mOk">Start ride</button>
+    </div>
+  </div>
+</div>
+
+<!-- share/copy fallback modal -->
+<div class="scrim" id="scrim2">
+  <div class="modal">
+    <h3 id="m2Title">Export</h3>
+    <p class="sub">Your device couldn't open the share sheet. Select all and copy, then paste into Notes, Mail or Files.</p>
+    <textarea id="m2Text" readonly></textarea>
+    <div class="row">
+      <button class="btn go" id="m2Copy">Copy</button>
+      <button class="btn ghost" id="m2Close">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+var $=function(s){return document.getElementById(s)};
+var LS={trips:'ridelog.trips.v1', fuel:'ridelog.fuel.v1', cfg:'ridelog.cfg.v1'};
+
+/* ---------- storage helpers (defensive) ---------- */
+function load(k,def){try{var r=localStorage.getItem(k);return r?JSON.parse(r):def;}catch(e){return def;}}
+function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
+
+var cfg=load(LS.cfg,{unit:'km',mount:'portrait',keepAwake:'on',lastGrade:'Shell V-Power'});
+if(!cfg.keepAwake)cfg.keepAwake='on';
+if(!cfg.lastGrade)cfg.lastGrade='Shell V-Power';
+var trips=load(LS.trips,[]);
+var fuel=load(LS.fuel,[]);
+
+/* ---------- units ---------- */
+function uLabel(){return cfg.unit;}
+function kmTo(x){return cfg.unit==='mi'?x*0.621371:x;}      // km -> display
+function toKm(x){return cfg.unit==='mi'?x/0.621371:x;}      // display -> km
+function spd(kmh){return cfg.unit==='mi'?kmh*0.621371:kmh;} // km/h -> display speed
+function fmt(n,d){n=(isFinite(n)?n:0);return n.toFixed(d==null?0:d);}
+
+/* ---------- navigation ---------- */
+var SCREENS=['scr-trips','scr-record','scr-trip','scr-fuel'];
+function show(id){SCREENS.forEach(function(s){$(s).hidden=(s!==id);});
+  $('navTrips').classList.toggle('on',id==='scr-trips');
+  $('navFuel').classList.toggle('on',id==='scr-fuel');
+  window.scrollTo(0,0);}
+$('navTrips').onclick=function(){show('scr-trips');renderTrips();};
+$('navFuel').onclick=function(){show('scr-fuel');renderFuel();};
+
+/* ---------- settings segments ---------- */
+function wireSeg(segId,key,render){
+  var seg=$(segId);
+  seg.querySelectorAll('button').forEach(function(b){
+    var val=b.getAttribute('data-u')||b.getAttribute('data-m')||b.getAttribute('data-a');
+    b.onclick=function(){
+      [].forEach.call(seg.children,function(c){c.classList.remove('on');});
+      b.classList.add('on');
+      cfg[key]=val;
+      save(LS.cfg,cfg); if(render) render();
+    };
+    b.classList.toggle('on',val===cfg[key]);
+  });
+}
+wireSeg('unitSeg','unit',function(){applyUnitLabels();renderTrips();renderFuel();});
+wireSeg('mountSeg','mount',null);
+wireSeg('awakeSeg','keepAwake',null);
+
+function applyUnitLabels(){
+  $('sumDistU').textContent=uLabel();
+  $('rDistU').textContent=uLabel(); $('rSpeedU').textContent=(cfg.unit==='mi'?'MPH':'KM/H');
+  $('fU2').textContent=uLabel();
+  [].forEach.call(document.querySelectorAll('.fuU'),function(e){e.textContent=uLabel();});
+}
+
+/* ================= RECORDING ================= */
+var rec=null, geoId=null, wakeLock=null, timer=null;
+var leanZero={gamma:0,beta:0}, curLean=0, curG=1;
+
+function startFlow(){
+  openOdoModal('Odometer before ride', 'Read it off your dash so fuel use can be worked out. You can skip it.',
+    uLabel(), 'Start ride', function(odo){
+      beginRide(odo);
+    });
+}
+
+function beginRide(startOdo){
+  try{
+    if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){DeviceOrientationEvent.requestPermission().catch(function(){});}
+    if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){DeviceMotionEvent.requestPermission().catch(function(){});}
+  }catch(e){}
+  window.addEventListener('deviceorientation',onOrient,true);
+  window.addEventListener('devicemotion',onMotion,true);
+
+  rec={startTs:Date.now(), startOdo:(startOdo==null?null:toKm(startOdo)), unit:cfg.unit,
+       track:[], distM:0, lastLat:null,lastLon:null,lastAlt:null, altGain:0,
+       maxSpeed:0, maxLean:0, maxG:1, lastPush:0};
+  $('ptCount').textContent='0 pts';
+  $('gpsDot').className='dot'; $('gpsTxt').textContent='waiting for GPS…';
+  $('rSpeed').textContent='0'; $('rDist').textContent='0.0'; $('rTime').textContent='0:00';
+  $('rMaxS').textContent='0'; $('rMaxL').textContent='0°'; $('rG').innerHTML='1.0<small>g</small>';
+
+  if(navigator.geolocation){
+    geoId=navigator.geolocation.watchPosition(onPos,onGeoErr,{enableHighAccuracy:true,maximumAge:1000,timeout:20000});
+  }else{
+    $('gpsTxt').textContent='no GPS on this browser';
+  }
+  requestWake();
+  timer=setInterval(tickTime,1000);
+  $('recBadge').textContent='● RECORDING';
+  show('scr-record');
+}
+
+function onPos(p){
+  if(!rec) return;
+  var c=p.coords, now=Date.now();
+  $('gpsDot').className='dot '+(c.accuracy<=25?'ok':'warn');
+  $('gpsTxt').textContent='GPS ±'+fmt(c.accuracy)+'m';
+  var kmh=(c.speed!=null && c.speed>=0)? c.speed*3.6 : null;
+  if(kmh!=null){ $('rSpeed').textContent=fmt(spd(kmh)); if(kmh>rec.maxSpeed){rec.maxSpeed=kmh; $('rMaxS').textContent=fmt(spd(kmh));}}
+  if(rec.lastLat!=null){var m=hav(rec.lastLat,rec.lastLon,c.latitude,c.longitude);
+    if(isFinite(m)&&m<400){rec.distM+=m;}}
+  rec.lastLat=c.latitude; rec.lastLon=c.longitude;
+  if(c.altitude!=null){ if(rec.lastAlt!=null){var da=c.altitude-rec.lastAlt; if(da>1)rec.altGain+=da;} rec.lastAlt=c.altitude; }
+  $('rDist').innerHTML=fmt(kmTo(rec.distM/1000),1)+'<small>'+uLabel()+'</small>';
+  if(now-rec.lastPush>=950){
+    rec.lastPush=now;
+    rec.track.push([Math.round((now-rec.startTs)/1000),
+      +c.latitude.toFixed(5), +c.longitude.toFixed(5),
+      kmh!=null?+kmh.toFixed(1):0, +curLean.toFixed(1),
+      c.altitude!=null?Math.round(c.altitude):null]);
+    $('ptCount').textContent=rec.track.length+' pts';
+  }
+}
+function onGeoErr(e){ if(!rec)return; $('gpsDot').className='dot'; $('gpsTxt').textContent='GPS: '+e.message; }
+
+function mountRaw(e){ return cfg.mount==='landscape' ? (e.beta||0) : (e.gamma||0); }
+function onOrient(e){
+  var raw=mountRaw(e);
+  var zero=cfg.mount==='landscape'?leanZero.beta:leanZero.gamma;
+  curLean=Math.max(-60,Math.min(60, raw-zero));
+  if(rec){
+    var a=Math.abs(curLean);
+    if(a>rec.maxLean){rec.maxLean=a; $('rMaxL').textContent=fmt(a)+'°';}
+    $('rLean').textContent=fmt(a)+'° '+(curLean<0?'L':'R');
+    $('rLeanCell').classList.toggle('hi',a>40);
+  }
+}
+function onMotion(e){
+  var a=e.accelerationIncludingGravity; if(!a)return;
+  curG=Math.sqrt((a.x||0)*(a.x||0)+(a.y||0)*(a.y||0)+(a.z||0)*(a.z||0))/9.81;
+  if(rec){ if(curG>rec.maxG)rec.maxG=curG; $('rG').innerHTML=fmt(curG,1)+'<small>g</small>'; }
+}
+$('calBtn').onclick=function(){
+  var handler=function(e){ leanZero.gamma=e.gamma||0; leanZero.beta=e.beta||0;
+    window.removeEventListener('deviceorientation',handler,true);
+    $('calBtn').textContent='Zeroed ✓'; setTimeout(function(){$('calBtn').textContent='Set upright';},1200);
+  };
+  window.addEventListener('deviceorientation',handler,true);
+};
+function tickTime(){ if(!rec)return; var s=Math.floor((Date.now()-rec.startTs)/1000); $('rTime').textContent=mmss(s); }
+
+function stopRide(){
+  openOdoModal('Odometer after ride','Enter the reading now to measure this ride by the dash. You can skip it.',
+    uLabel(),'Save ride', function(endOdo){ finishRide(endOdo); });
+}
+function finishRide(endOdo){
+  if(geoId!=null && navigator.geolocation){navigator.geolocation.clearWatch(geoId);} geoId=null;
+  window.removeEventListener('deviceorientation',onOrient,true);
+  window.removeEventListener('devicemotion',onMotion,true);
+  if(timer){clearInterval(timer);timer=null;}
+  releaseWake();
+  var endTs=Date.now(), durS=Math.round((endTs-rec.startTs)/1000);
+  var trip={
+    id:'t'+rec.startTs, startTs:rec.startTs, endTs:endTs, durS:durS, unit:rec.unit,
+    startOdo:rec.startOdo, endOdo:(endOdo==null?null:toKm(endOdo)),
+    distKm:rec.distM/1000, maxSpeedKmh:rec.maxSpeed,
+    avgSpeedKmh: durS>0? (rec.distM/1000)/(durS/3600):0,
+    maxLean:rec.maxLean, maxG:rec.maxG, altGainM:Math.round(rec.altGain),
+    track:rec.track
+  };
+  trips.unshift(trip);
+  if(!save(LS.trips,trips)){ trips.shift(); alert('Storage full — export and delete an old ride first.'); }
+  rec=null; $('recBadge').textContent='OFFLINE · PHONE ONLY';
+  renderTrips(); openTrip(trip.id);
+}
+
+$('startBtn').onclick=startFlow;
+$('stopBtn').onclick=stopRide;
+
+/* ---------- wake lock ---------- */
+function requestWake(){
+  if(cfg.keepAwake==='off')return;
+  try{if('wakeLock' in navigator){navigator.wakeLock.request('screen').then(function(w){wakeLock=w;}).catch(function(){});}}catch(e){}
+}
+function releaseWake(){try{if(wakeLock){wakeLock.release();wakeLock=null;}}catch(e){}}
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'&&rec)requestWake();});
+
+/* ---------- math ---------- */
+function hav(a,b,c,d){var R=6371000,t=Math.PI/180,dLat=(c-a)*t,dLon=(d-b)*t;
+  var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a*t)*Math.cos(c*t)*Math.sin(dLon/2)*Math.sin(dLon/2);
+  return 2*R*Math.asin(Math.min(1,Math.sqrt(x)));}
+function mmss(s){var m=Math.floor(s/60),ss=s%60;return m+':'+(ss<10?'0':'')+ss;}
+function hm(s){var h=Math.floor(s/3600),m=Math.round((s%3600)/60);return h>0?(h+'h '+m+'m'):(m+'m');}
+function dateStr(ts){var d=new Date(ts);return d.toLocaleDateString([], {weekday:'short',day:'numeric',month:'short'})+' '+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});}
+
+/* ================= RIDES LIST ================= */
+function tripDistShown(t){
+  if(t.startOdo!=null && t.endOdo!=null && t.endOdo>=t.startOdo) return t.endOdo-t.startOdo;
+  return t.distKm;
+}
+function renderTrips(){
+  applyUnitLabels();
+  $('sumRides').textContent=trips.length;
+  var totKm=trips.reduce(function(a,t){return a+tripDistShown(t);},0);
+  $('sumDist').innerHTML=fmt(kmTo(totKm),totKm<100?1:0)+'<small>'+uLabel()+'</small>';
+  var eco=fuelAverage();
+  $('sumEco').innerHTML=(eco?fmt(kmTo(eco),1):'—')+'<small>'+uLabel()+'/L</small>';
+  var list=$('tripList');
+  if(!trips.length){ list.innerHTML='<div class="empty">No rides yet.<br>Tap <b>Start ride</b> to record your first route, lean and speed.</div>'; return; }
+  list.innerHTML='';
+  trips.forEach(function(t){
+    var el=document.createElement('button'); el.className='item';
+    el.innerHTML='<div class="main"><div class="t">'+dateStr(t.startTs)+'</div>'+
+      '<div class="d">'+hm(t.durS)+' · max lean '+fmt(t.maxLean)+'° · '+t.track.length+' pts</div></div>'+
+      '<div class="r"><b>'+fmt(kmTo(tripDistShown(t)),1)+'</b><span>'+uLabel()+'</span></div>';
+    el.onclick=function(){openTrip(t.id);};
+    list.appendChild(el);
+  });
+}
+
+/* ================= TRIP DETAIL ================= */
+var curTrip=null;
+function openTrip(id){
+  curTrip=trips.filter(function(t){return t.id===id;})[0]; if(!curTrip)return;
+  var t=curTrip;
+  $('tripTitle').textContent='Ride · '+fmt(kmTo(tripDistShown(t)),1)+' '+uLabel();
+  $('tripWhen').textContent=dateStr(t.startTs)+'  —  '+new Date(t.endTs).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+  drawRoute(t.track);
+  var odoDist=(t.startOdo!=null&&t.endOdo!=null&&t.endOdo>=t.startOdo)?(t.endOdo-t.startOdo):null;
+  var cells=[
+    ['Duration',hm(t.durS),''],
+    ['Dist (GPS)',fmt(kmTo(t.distKm),1),uLabel()],
+    ['Dist (odo)',odoDist!=null?fmt(kmTo(odoDist),1):'—',uLabel()],
+    ['Avg speed',fmt(spd(t.avgSpeedKmh)),cfg.unit==='mi'?'mph':'km/h'],
+    ['Max speed',fmt(spd(t.maxSpeedKmh)),cfg.unit==='mi'?'mph':'km/h'],
+    ['Max lean',fmt(t.maxLean),'°'],
+    ['Max g',fmt(t.maxG,1),'g'],
+    ['Climb',fmt(t.altGainM),'m'],
+    ['Points',t.track.length,'']
+  ];
+  $('tripStats').innerHTML=cells.map(function(c){
+    return '<div class="cell"><div class="k">'+c[0]+'</div><div class="v">'+c[1]+(c[2]?'<small>'+c[2]+'</small>':'')+'</div></div>';
+  }).join('');
+  drawLine('chartSpeed', t.track, function(p){return spd(p[3]);}, '#2fd27a', false);
+  drawLine('chartLean', t.track, function(p){return p[4];}, '#4aa8ff', true);
+  show('scr-trip');
+}
+$('tripBack').onclick=function(){show('scr-trips');renderTrips();};
+$('delTrip').onclick=function(){
+  if(!curTrip)return;
+  trips=trips.filter(function(t){return t.id!==curTrip.id;});
+  save(LS.trips,trips); show('scr-trips'); renderTrips();
+};
+
+function drawRoute(track){
+  var svg=$('route'); svg.innerHTML='';
+  var pts=track.filter(function(p){return p[1]&&p[2];});
+  if(pts.length<2){ svg.innerHTML='<text x="170" y="100" fill="#5c6572" font-size="12" text-anchor="middle" font-family="sans-serif">No GPS track for this ride</text>'; return; }
+  var W=340,H=200,pad=16;
+  var lat0=pts[0][1]*Math.PI/180;
+  var xs=pts.map(function(p){return p[2]*Math.cos(lat0);}), ys=pts.map(function(p){return p[1];});
+  var minX=Math.min.apply(null,xs),maxX=Math.max.apply(null,xs),minY=Math.min.apply(null,ys),maxY=Math.max.apply(null,ys);
+  var dx=(maxX-minX)||1e-6, dy=(maxY-minY)||1e-6, sc=Math.min((W-2*pad)/dx,(H-2*pad)/dy);
+  var ox=(W-dx*sc)/2, oy=(H-dy*sc)/2;
+  function X(i){return ox+(xs[i]-minX)*sc;} function Y(i){return H-(oy+(ys[i]-minY)*sc);}
+  var d=''; for(var i=0;i<pts.length;i++){d+=(i?'L':'M')+X(i).toFixed(1)+' '+Y(i).toFixed(1)+' ';}
+  var ns='http://www.w3.org/2000/svg';
+  var path=document.createElementNS(ns,'path'); path.setAttribute('d',d);
+  path.setAttribute('fill','none'); path.setAttribute('stroke','#2fd27a'); path.setAttribute('stroke-width','2.5');
+  path.setAttribute('stroke-linejoin','round'); path.setAttribute('stroke-linecap','round'); svg.appendChild(path);
+  [['#4aa8ff',0],['#ef5a5a',pts.length-1]].forEach(function(c){
+    var cc=document.createElementNS(ns,'circle'); cc.setAttribute('cx',X(c[1])); cc.setAttribute('cy',Y(c[1]));
+    cc.setAttribute('r','4'); cc.setAttribute('fill',c[0]); svg.appendChild(cc);
+  });
+}
+function drawLine(id,track,fn,color,symmetric){
+  var svg=$(id); svg.innerHTML=''; var W=340,H=110,pad=12;
+  if(track.length<2){svg.innerHTML='<text x="170" y="58" fill="#5c6572" font-size="11" text-anchor="middle" font-family="sans-serif">no data</text>';return;}
+  var vals=track.map(fn), t0=track[0][0], t1=track[track.length-1][0]||1;
+  var mn=Math.min.apply(null,vals), mx=Math.max.apply(null,vals);
+  if(symmetric){var m=Math.max(Math.abs(mn),Math.abs(mx),5); mn=-m; mx=m;}
+  else { mn=Math.min(0,mn); mx=mx||1; }
+  var dv=(mx-mn)||1, dt=(t1-t0)||1, ns='http://www.w3.org/2000/svg';
+  function X(t){return pad+(t-t0)/dt*(W-2*pad);} function Y(v){return H-pad-(v-mn)/dv*(H-2*pad);}
+  if(symmetric){var z=document.createElementNS(ns,'line');z.setAttribute('x1',pad);z.setAttribute('x2',W-pad);
+    z.setAttribute('y1',Y(0));z.setAttribute('y2',Y(0));z.setAttribute('stroke','#2a323c');z.setAttribute('stroke-width','1');svg.appendChild(z);}
+  var d=''; track.forEach(function(p,i){d+=(i?'L':'M')+X(p[0]).toFixed(1)+' '+Y(fn(p)).toFixed(1)+' ';});
+  var path=document.createElementNS(ns,'path'); path.setAttribute('d',d); path.setAttribute('fill','none');
+  path.setAttribute('stroke',color); path.setAttribute('stroke-width','2'); path.setAttribute('stroke-linejoin','round'); svg.appendChild(path);
+  var lbl=document.createElementNS(ns,'text'); lbl.setAttribute('x',W-pad); lbl.setAttribute('y',14);
+  lbl.setAttribute('fill','#8a93a0'); lbl.setAttribute('font-size','10'); lbl.setAttribute('text-anchor','end');
+  lbl.setAttribute('font-family','monospace'); lbl.textContent='peak '+fmt(symmetric?Math.max(Math.abs(mn),mx):mx,0); svg.appendChild(lbl);
+}
+
+/* ================= EXPORT ================= */
+function tripGPX(t){
+  var head='<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="RideLogger" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>Ride '+new Date(t.startTs).toISOString()+'</name><trkseg>\n';
+  var body=t.track.filter(function(p){return p[1]&&p[2];}).map(function(p){
+    var iso=new Date(t.startTs+p[0]*1000).toISOString();
+    var ele=p[5]!=null?('<ele>'+p[5]+'</ele>'):'';
+    return '<trkpt lat="'+p[1]+'" lon="'+p[2]+'">'+ele+'<time>'+iso+'</time></trkpt>';
+  }).join('\n');
+  return head+body+'\n</trkseg></trk></gpx>';
+}
+function tripCSV(t){
+  var rows=['t_s,lat,lon,speed_kmh,lean_deg,alt_m'];
+  t.track.forEach(function(p){rows.push([p[0],p[1],p[2],p[3],p[4],p[5]==null?'':p[5]].join(','));});
+  var meta='# Ride '+new Date(t.startTs).toISOString()+'\n# duration_s='+t.durS+' dist_gps_km='+t.distKm.toFixed(3)+
+    ' start_odo_km='+(t.startOdo==null?'':t.startOdo)+' end_odo_km='+(t.endOdo==null?'':t.endOdo)+
+    ' max_speed_kmh='+t.maxSpeedKmh.toFixed(1)+' max_lean_deg='+t.maxLean.toFixed(1)+' max_g='+t.maxG.toFixed(2)+'\n';
+  return meta+rows.join('\n');
+}
+function shareOrShow(filename,mime,text,title){
+  try{
+    if(navigator.canShare){
+      var file=new File([text],filename,{type:mime});
+      if(navigator.canShare({files:[file]})){ navigator.share({files:[file],title:title}).catch(function(){}); return; }
+    }
+  }catch(e){}
+  $('m2Title').textContent=title; $('m2Text').value=text; $('scrim2').classList.add('on');
+  $('m2Text').focus(); $('m2Text').select();
+}
+$('shareGpx').onclick=function(){ if(curTrip) shareOrShow('ride-'+curTrip.id+'.gpx','application/gpx+xml',tripGPX(curTrip),'Ride GPX'); };
+$('copyCsv').onclick=function(){ if(curTrip) shareOrShow('ride-'+curTrip.id+'.csv','text/csv',tripCSV(curTrip),'Ride CSV'); };
+$('m2Copy').onclick=function(){ $('m2Text').select(); try{document.execCommand('copy');}catch(e){} try{navigator.clipboard.writeText($('m2Text').value).catch(function(){});}catch(e){} $('m2Copy').textContent='Copied ✓'; setTimeout(function(){$('m2Copy').textContent='Copy';},1200); };
+$('m2Close').onclick=function(){ $('scrim2').classList.remove('on'); };
+
+$('backupBtn').onclick=function(){
+  var data={v:2,exported:new Date().toISOString(),cfg:cfg,trips:trips,fuel:fuel};
+  shareOrShow('ridelog-backup.json','application/json',JSON.stringify(data),'Ride Log backup');
+};
+$('restoreBtn').onclick=function(){
+  $('m2Title').textContent='Restore'; $('m2Text').value=''; $('m2Text').removeAttribute('readonly');
+  $('m2Text').placeholder='Paste a backup JSON here, then tap Restore.';
+  $('scrim2').classList.add('on');
+  $('m2Copy').textContent='Restore';
+  $('m2Copy').onclick=function(){
+    try{var d=JSON.parse($('m2Text').value);
+      if(d.trips)trips=d.trips; if(d.fuel)fuel=d.fuel; if(d.cfg)cfg=d.cfg;
+      save(LS.trips,trips);save(LS.fuel,fuel);save(LS.cfg,cfg);
+      $('scrim2').classList.remove('on'); $('m2Text').setAttribute('readonly','');
+      $('m2Copy').textContent='Copy'; wireCopyBack();
+      renderTrips();renderFuel(); alert('Restored.');
+    }catch(e){alert('That did not look like a backup file.');}
+  };
+};
+function wireCopyBack(){ $('m2Copy').onclick=function(){ $('m2Text').select(); try{document.execCommand('copy');}catch(e){} $('m2Copy').textContent='Copied ✓'; setTimeout(function(){$('m2Copy').textContent='Copy';},1200); }; }
+
+/* ================= FUEL ================= */
+function fuelSorted(){ return fuel.slice().sort(function(a,b){return a.odoKm-b.odoKm;}); }
+function fullIntervals(){ // accurate full-tank -> full-tank intervals
+  var s=fuelSorted(), fi=[];
+  for(var i=0;i<s.length;i++){ if(s[i].full) fi.push(i); }
+  var ivs=[];
+  for(var k=1;k<fi.length;k++){ var a=fi[k-1], b=fi[k], dist=s[b].odoKm-s[a].odoKm, lit=0;
+    for(var j=a+1;j<=b;j++){ lit+=(s[j].litres||0); }
+    if(dist>0 && lit>0) ivs.push({dist:dist,lit:lit});
+  }
+  return ivs;
+}
+function fuelAverage(){ // km per litre
+  var ivs=fullIntervals();
+  if(ivs.length){ var d=0,l=0; ivs.forEach(function(x){d+=x.dist;l+=x.lit;}); return l>0?d/l:null; }
+  var s=fuelSorted(); if(s.length<2)return null;
+  var dist=0,lit=0;
+  for(var i=1;i<s.length;i++){ var dd=s[i].odoKm-s[i-1].odoKm; if(dd>0 && s[i].litres>0){ dist+=dd; lit+=s[i].litres; } }
+  return lit>0? dist/lit : null;
+}
+function fuelLast(){
+  var ivs=fullIntervals();
+  if(ivs.length){ var x=ivs[ivs.length-1]; return x.dist/x.lit; }
+  var s=fuelSorted();
+  if(s.length>=2){ var a=s[s.length-2],b=s[s.length-1],dd=b.odoKm-a.odoKm; if(dd>0&&b.litres>0)return dd/b.litres; }
+  return null;
+}
+function renderFuel(){
+  applyUnitLabels();
+  var last=fuelLast(), avg=fuelAverage();
+  $('fLast').innerHTML=(last?fmt(kmTo(last),1):'—')+'<small>'+uLabel()+'/L</small>';
+  $('fAvg').innerHTML=(avg?fmt(kmTo(avg),1):'—')+'<small>'+uLabel()+'/L</small>';
+  $('fL100').textContent=avg? fmt(100/kmTo(avg),1) : '—';
+  var list=$('fuelList');
+  if(!fuel.length){ list.innerHTML='<div class="empty">No fill-ups yet.<br>Add one each time you refuel to track economy.</div>'; return; }
+  list.innerHTML='';
+  var byOdo=fuelSorted();
+  fuel.slice().sort(function(a,b){return b.ts-a.ts;}).forEach(function(f){
+    var idx=byOdo.indexOf(f), prev=idx>0?byOdo[idx-1]:null;
+    var eco=(prev && f.odoKm>prev.odoKm && f.litres>0)? (f.odoKm-prev.odoKm)/f.litres : null;
+    var tags=(f.full?' · full':'')+(f.grade?(' · '+f.grade):'');
+    var el=document.createElement('div'); el.className='item';
+    el.innerHTML='<div class="main"><div class="t">'+fmt(kmTo(f.odoKm),0)+' '+uLabel()+' · '+fmt(f.litres,2)+' L'+(f.full?' <span class="pill">full</span>':'')+'</div>'+
+      '<div class="d">'+dateStr(f.ts)+(f.grade?(' · '+f.grade):'')+(f.price?(' · $'+fmt(f.price,2)):'')+'</div></div>'+
+      '<div class="r"><b>'+(eco?fmt(kmTo(eco),1):'—')+'</b><span>'+uLabel()+'/L</span></div>';
+    var del=document.createElement('button'); del.className='btn danger'; del.style.flex='0'; del.style.padding='8px 10px'; del.textContent='✕';
+    del.onclick=function(){ fuel=fuel.filter(function(x){return x.id!==f.id;}); save(LS.fuel,fuel); renderFuel(); renderTrips(); };
+    el.appendChild(del); list.appendChild(el);
+  });
+}
+$('fuelAdd').onclick=function(){
+  var odo=parseFloat($('fuelOdo').value), lit=parseFloat($('fuelLit').value), pr=parseFloat($('fuelPrice').value);
+  if(!(odo>0)){ $('fuelOdo').focus(); return; }
+  if(!(lit>0)){ $('fuelLit').focus(); return; }
+  var grade=$('fuelGrade').value, full=$('fuelFull').checked;
+  fuel.push({id:'f'+Date.now(), ts:Date.now(), odoKm:toKm(odo), litres:lit, price:isFinite(pr)?pr:null, unit:cfg.unit, grade:grade, full:full});
+  save(LS.fuel,fuel);
+  cfg.lastGrade=grade; save(LS.cfg,cfg);
+  $('fuelOdo').value=''; $('fuelLit').value=''; $('fuelPrice').value=''; $('fuelFull').checked=true;
+  renderFuel(); renderTrips();
+};
+
+/* ================= ODO MODAL ================= */
+var modalCb=null;
+function openOdoModal(title,sub,unit,okText,cb){
+  $('mTitle').textContent=title; $('mSub').textContent=sub;
+  $('mLabel').textContent='Odometer ('+unit+')'; $('mOk').textContent=okText; $('mOdo').value='';
+  modalCb=cb; $('scrim').classList.add('on'); setTimeout(function(){$('mOdo').focus();},50);
+}
+$('mOk').onclick=function(){ var v=parseFloat($('mOdo').value); $('scrim').classList.remove('on'); var cb=modalCb; modalCb=null; if(cb)cb(isFinite(v)?v:null); };
+$('mCancel').onclick=function(){ $('scrim').classList.remove('on'); modalCb=null; };
+
+/* ================= INIT ================= */
+try{ $('fuelGrade').value=cfg.lastGrade; }catch(e){}
+applyUnitLabels(); renderTrips(); renderFuel(); show('scr-trips');
+window.addEventListener('beforeunload',function(e){ if(rec){e.preventDefault();e.returnValue='';} });
+})();
+</script>
+</body>
+</html>
