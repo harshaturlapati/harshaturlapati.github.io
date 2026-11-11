@@ -1,0 +1,1017 @@
+<!doctype html>
+<!-- FBN 3086K ride logger — FBN_3086K_stats_v5.html (v5: tidied the Fuel form so the "Odometer (km)" label no longer wraps onto three lines on narrow phones. Everything else unchanged from v4 — clearer weather icons/colours, the free no-key map, backup and rain-warning.) -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FBN 3086K</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  /* Phone-only ride logger. Core recording + backup work fully OFFLINE.
+     Map tiles + NEA weather are extras that switch on when you have internet. */
+  :root{
+    --bg:#0a0c0f; --panel:#13171c; --panel2:#0f1318; --line:#232a33;
+    --fg:#f2f5f8; --dim:#8a93a0; --dim2:#5c6572;
+    --accent:#2fd27a; --accent2:#1f8f52; --warn:#f0a73a; --crit:#ef5a5a; --blue:#4aa8ff;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);}
+  button{font-family:inherit}
+  a{color:var(--blue)}
+  .hide{display:none!important}
+
+  header{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:14px 16px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+  header .brand{font-weight:800;letter-spacing:1px;font-size:17px}
+  header .brand small{display:block;color:var(--dim2);font-weight:700;letter-spacing:2px;font-size:9px;margin-top:3px}
+  .hstat{display:flex;align-items:center;gap:7px;color:var(--dim);font-size:11px;font-family:var(--mono)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--crit);vertical-align:-1px}
+  .dot.ok{background:var(--accent)} .dot.warn{background:var(--warn)}
+
+  main{padding:16px 16px 92px;max-width:720px;margin:0 auto}
+  section{display:flex;flex-direction:column;gap:14px}
+  h2{margin:2px 0 0;font-size:20px;letter-spacing:.2px}
+  .sub{color:var(--dim);font-size:13px;line-height:1.55;margin:0}
+  .caption{color:var(--dim2);font-size:11px;letter-spacing:.6px;text-transform:uppercase}
+
+  /* big friendly buttons */
+  .bigbtn{appearance:none;border:0;border-radius:16px;background:var(--accent);color:#04120a;
+    font-size:20px;font-weight:800;letter-spacing:.2px;padding:22px 18px;display:flex;align-items:center;
+    justify-content:center;gap:10px;width:100%;min-height:64px}
+  .bigbtn.stop{background:var(--crit);color:#170303}
+  .bigbtn.save{background:var(--accent)}
+  .bigbtn.load{background:var(--blue);color:#04121f}
+  .bigbtn.ghostbig{background:var(--panel);color:var(--fg);border:1px solid var(--line);font-size:17px;min-height:56px}
+  .bigbtn:active{transform:translateY(1px)}
+  .hint{color:var(--dim);font-size:12px;text-align:center;margin:-4px 0 2px;line-height:1.5}
+
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .row>*{flex:1;min-width:0}
+  .btn{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--fg);
+    border-radius:12px;padding:14px;font-size:14px;font-weight:700;letter-spacing:.2px;text-align:center;min-height:48px}
+  .btn.ghost{background:transparent;color:var(--dim)}
+  .btn.danger{color:var(--crit);border-color:#43242a;background:#190e10}
+  .btn.go{background:var(--accent);color:#04120a;border-color:transparent}
+  .btn.blue{background:var(--blue);color:#04121f;border-color:transparent}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .card h3{margin:0;font-size:16px;display:flex;align-items:center;gap:8px}
+
+  .stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  .stats.two{grid-template-columns:1fr 1fr}
+  .cell{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;
+    display:flex;flex-direction:column;gap:5px;justify-content:center}
+  .cell .k{color:var(--dim);font-size:10px;letter-spacing:1.2px;text-transform:uppercase}
+  .cell .v{font-size:clamp(19px,6vw,26px);font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+  .cell .v small{font-size:.5em;color:var(--dim);font-weight:700;margin-left:3px}
+  .cell.hi .v{color:var(--warn)}
+
+  .speedwrap{background:var(--panel);border:1px solid var(--line);border-radius:18px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px 14px}
+  .speedwrap .val{font-size:clamp(66px,24vw,128px);font-weight:800;line-height:.86;font-variant-numeric:tabular-nums}
+  .speedwrap .unit{color:var(--dim);letter-spacing:3px;font-size:13px;margin-top:8px}
+
+  .list{display:flex;flex-direction:column;gap:8px}
+  .item{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 14px;
+    display:flex;align-items:center;gap:12px;text-align:left;width:100%;color:inherit}
+  .item .main{flex:1;min-width:0}
+  .item .t{font-weight:700;font-size:15px}
+  .item .d{color:var(--dim);font-size:12px;margin-top:3px}
+  .item .r{text-align:right;font-variant-numeric:tabular-nums}
+  .item .r b{font-size:17px;font-weight:800}
+  .item .r span{display:block;color:var(--dim);font-size:11px;margin-top:2px}
+  .empty{color:var(--dim2);text-align:center;padding:26px 12px;font-size:13px;line-height:1.7;
+    border:1px dashed var(--line);border-radius:14px}
+
+  .foot{display:flex;justify-content:space-between;align-items:center;color:var(--dim);
+    font-size:11px;font-family:var(--mono);padding:2px}
+
+  svg.plot{width:100%;height:auto;display:block;background:var(--panel2);border:1px solid var(--line);border-radius:14px}
+
+  /* map */
+  .mapwrap{position:relative;border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  .lmap{height:300px;width:100%;background:#0a0c0f}
+  .lmap.tall{height:340px}
+  .wxinfo{position:absolute;left:10px;top:10px;z-index:500;display:none;align-items:center;gap:7px;
+    background:rgba(10,12,15,.82);border:1px solid var(--line);border-radius:999px;
+    padding:6px 12px;font-size:12px;font-weight:700;color:var(--fg);backdrop-filter:blur(4px)}
+  .leaflet-container{background:#0a0c0f;font-family:var(--sans)}
+  .leaflet-control-attribution{font-size:9px!important;background:rgba(10,12,15,.6)!important;color:#6d7682!important}
+  .leaflet-control-attribution a{color:#8a93a0!important}
+  .wxicon{display:flex;align-items:center;justify-content:center}
+  .wxicon span{font-size:21px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.75))}
+  .wxlegend{display:flex;flex-wrap:wrap;gap:6px 11px;font-size:11px;color:var(--dim);align-items:center;margin-top:-4px}
+  .wxlegend span{display:inline-flex;align-items:center;gap:4px}
+  .wxlegend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+
+  label.fld{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--dim);letter-spacing:.3px}
+  input[type=number],input[type=text]{appearance:none;background:var(--panel2);border:1px solid var(--line);
+    color:var(--fg);border-radius:12px;padding:14px;font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;
+    width:100%;font-family:var(--mono)}
+  select.sel{appearance:none;-webkit-appearance:none;background:var(--panel2);border:1px solid var(--line);
+    color:var(--fg);border-radius:12px;padding:14px;font-size:16px;font-weight:700;width:100%;font-family:var(--sans)}
+  label.chk{display:flex;flex-direction:row;align-items:center;gap:12px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:12px;padding:14px;font-size:14px;font-weight:700;color:var(--fg)}
+  label.chk input{width:26px;height:26px;accent-color:var(--accent);margin:0;flex:0 0 auto}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg button{appearance:none;border:0;background:var(--panel);color:var(--dim);padding:10px 16px;font-size:13px;font-weight:700}
+  .seg button.on{background:#0e1a12;color:var(--fg)}
+  .seg.baseseg{display:flex;width:100%}
+  .seg.baseseg button{flex:1;padding:10px 6px}
+  .setrow{display:flex;align-items:center;justify-content:space-between;gap:10px}
+
+  .note{background:#12100a;border:1px solid #3a3115;color:#e7cf94;border-radius:14px;padding:14px;font-size:13px;line-height:1.6}
+  .note b{color:#f3dc9f}
+  .okbox{background:#0c1711;border:1px solid #1f8f52;color:#b8f0cf;border-radius:14px;padding:13px 15px;font-size:13px;line-height:1.5;font-weight:700}
+  .pill{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:999px;
+    padding:4px 10px;font-size:11px;color:var(--dim);letter-spacing:.3px}
+
+  /* modal */
+  .scrim{position:fixed;inset:0;background:rgba(3,5,8,.8);display:none;align-items:center;justify-content:center;
+    padding:22px;z-index:60}
+  .scrim.on{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:20px;width:100%;max-width:420px;
+    display:flex;flex-direction:column;gap:16px}
+  .modal h3{margin:0;font-size:19px}
+  .modal p{margin:0;color:var(--dim);font-size:13px;line-height:1.5}
+  textarea{width:100%;min-height:120px;background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+    border-radius:12px;padding:12px;font-family:var(--mono);font-size:12px}
+
+  /* bottom nav */
+  .bottomnav{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;
+    background:var(--panel);border-top:1px solid var(--line);
+    padding-top:6px;padding-bottom:calc(6px + env(safe-area-inset-bottom));
+    padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+  .bottomnav button{flex:1;appearance:none;border:0;background:transparent;color:var(--dim);
+    display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;font-size:11px;font-weight:700;letter-spacing:.2px}
+  .bottomnav button .ic{font-size:23px;line-height:1}
+  .bottomnav button.on{color:var(--accent)}
+
+  /* rain warning */
+  .rainwarn{position:sticky;top:0;z-index:30;background:#2a1206;border-bottom:2px solid var(--warn);
+    color:#ffdca6;padding:12px 16px;font-size:14px;line-height:1.45;font-weight:700;
+    display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .rainwarn span{flex:1;min-width:140px;font-weight:600;color:#ffcf96}
+  .rainwarn.on{animation:rainpulse 1.1s ease-in-out infinite}
+  .rainwarn button{background:var(--warn);color:#1a1205;border:0;border-radius:9px;padding:8px 13px;font-weight:800;font-size:12px}
+  @keyframes rainpulse{0%,100%{background:#2a1206}50%{background:#3f1d09}}
+
+  /* toast */
+  #toast{position:fixed;left:50%;bottom:92px;transform:translateX(-50%) translateY(16px);z-index:70;
+    background:#0c1711;border:1px solid #1f8f52;color:#eafff2;font-weight:800;font-size:14px;
+    padding:12px 18px;border-radius:999px;opacity:0;pointer-events:none;transition:.22s;max-width:92vw;text-align:center}
+  #toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">FBN 3086K<small id="recBadge">RIDE LOGGER · PHONE</small></div>
+  <div class="hstat"><span class="dot" id="netDot"></span><span id="netTxt">offline</span></div>
+</header>
+
+<div id="rainWarn" class="rainwarn hide"></div>
+
+<main>
+  <!-- ===================== RIDES ===================== -->
+  <section id="scr-trips">
+    <button class="bigbtn" id="startBtn">🏍️ &nbsp;Start ride</button>
+    <div class="hint" id="savedHint">0 rides saved on this phone</div>
+
+    <div id="tipBanner" class="note hide">
+      💡 <b>Keep your rides safe.</b> Add this page to your Home Screen, then tap <b>Backup</b> now and then to save a file.
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="tipGoBackup" style="flex:1">Open Backup</button>
+        <button class="btn ghost" id="tipDismiss" style="flex:0;min-width:84px">Later</button>
+      </div>
+    </div>
+
+    <div class="stats three">
+      <div class="cell"><div class="k">Rides</div><div class="v" id="sumRides">0</div></div>
+      <div class="cell"><div class="k">Distance</div><div class="v" id="sumDist">0<small id="sumDistU">km</small></div></div>
+      <div class="cell"><div class="k">Economy</div><div class="v" id="sumEco">—<small>km/L</small></div></div>
+    </div>
+
+    <button class="bigbtn ghostbig" id="liveMapBtn">🗺️ &nbsp;Live map &amp; weather</button>
+    <div class="hint">See where you are and the clouds/rain around you now (needs internet)</div>
+
+    <div>
+      <div class="caption" style="margin-bottom:8px">Your saved rides</div>
+      <div class="list" id="tripList"></div>
+    </div>
+  </section>
+
+  <!-- ===================== RECORDING ===================== -->
+  <section id="scr-record" hidden>
+    <div class="speedwrap"><div class="val" id="rSpeed">0</div><div class="unit" id="rSpeedU">KM/H</div></div>
+    <div class="stats three">
+      <div class="cell" id="rLeanCell"><div class="k">Lean</div><div class="v" id="rLean">0°</div></div>
+      <div class="cell"><div class="k">G-force</div><div class="v" id="rG">1.0<small>g</small></div></div>
+      <div class="cell"><div class="k">Distance</div><div class="v" id="rDist">0.0<small id="rDistU">km</small></div></div>
+      <div class="cell"><div class="k">Time</div><div class="v" id="rTime">0:00</div></div>
+      <div class="cell"><div class="k">Max spd</div><div class="v" id="rMaxS">0</div></div>
+      <div class="cell"><div class="k">Max lean</div><div class="v" id="rMaxL">0°</div></div>
+    </div>
+    <div class="caption">Your route so far (works offline)</div>
+    <svg class="plot" id="liveTrace" viewBox="0 0 340 170" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="foot">
+      <span><span class="dot" id="gpsDot"></span><span id="gpsTxt">waiting for GPS…</span></span>
+      <span id="ptCount">0 pts</span>
+    </div>
+    <div class="row">
+      <button class="btn" id="calBtn">Set upright (zero the lean)</button>
+    </div>
+    <button class="bigbtn stop" id="stopBtn">■ &nbsp;Stop &amp; save ride</button>
+  </section>
+
+  <!-- ===================== TRIP DETAIL ===================== -->
+  <section id="scr-trip" hidden>
+    <button class="btn ghost" id="tripBack" style="align-self:flex-start;flex:0;min-width:150px">‹ Back to rides</button>
+    <h2 id="tripTitle">Ride</h2>
+    <p class="sub" id="tripWhen"></p>
+
+    <div class="mapwrap" id="tripMapWrap">
+      <div class="lmap" id="tripMap"></div>
+      <div class="wxinfo" id="tripWx"></div>
+    </div>
+    <svg class="plot" id="route" viewBox="0 0 340 200" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="row">
+      <button class="btn blue" id="tripWxBtn">☁️ Weather: off</button>
+    </div>
+    <div class="seg baseseg" id="tripBaseSeg"><button data-b="dark" class="on">Dark</button><button data-b="sat">Satellite</button><button data-b="streets">Streets</button></div>
+    <div class="hint" id="tripWxHint">Live NEA weather — an icon per area shows its condition, colour shows rain. (Weather is for now, not when you rode.)</div>
+    <div class="wxlegend" id="tripWxLegend"><span>☀️ fair</span><span>⛅ part</span><span>☁️ cloud</span><span><i style="background:#7ec8ef"></i>light</span><span><i style="background:#2f86e0"></i>rain</span><span><i style="background:#f2992e"></i>heavy</span><span><i style="background:#e4572e"></i>⛈️ storm</span></div>
+
+    <div class="stats three" id="tripStats"></div>
+    <div><div class="caption" style="margin-bottom:6px">Speed</div><svg class="plot" id="chartSpeed" viewBox="0 0 340 110"></svg></div>
+    <div><div class="caption" style="margin-bottom:6px">Lean (L / R)</div><svg class="plot" id="chartLean" viewBox="0 0 340 110"></svg></div>
+    <div class="row">
+      <button class="btn go" id="shareGpx">Share route (GPX)</button>
+      <button class="btn" id="copyCsv">Share data (CSV)</button>
+    </div>
+    <button class="btn danger" id="delTrip">Delete this ride</button>
+  </section>
+
+  <!-- ===================== LIVE MAP ===================== -->
+  <section id="scr-map" hidden>
+    <button class="btn ghost" id="mapBack" style="align-self:flex-start;flex:0;min-width:150px">‹ Back to rides</button>
+    <h2>Live map &amp; weather</h2>
+    <div class="mapwrap">
+      <div class="lmap tall" id="liveMap"></div>
+      <div class="wxinfo" id="liveWx"></div>
+    </div>
+    <div class="hint">Green dot = you. Grey = cloud, darker = rain, live from NEA.</div>
+    <div class="hint">Rain warnings follow your GPS direction of travel — a web page can't read your Google&nbsp;Maps route — and check NEA rain ahead.</div>
+    <div class="wxlegend" id="liveWxLegend"><span>☀️ fair</span><span>⛅ part</span><span>☁️ cloud</span><span><i style="background:#7ec8ef"></i>light</span><span><i style="background:#2f86e0"></i>rain</span><span><i style="background:#f2992e"></i>heavy</span><span><i style="background:#e4572e"></i>⛈️ storm</span></div>
+    <div class="note hide" id="mapMsg">This needs internet. Connect to mobile data or Wi-Fi (not the bike's camera Wi-Fi) to load the map and weather.</div>
+    <div class="row">
+      <button class="btn blue" id="liveWxBtn">☁️ Weather: on</button>
+      <button class="btn" id="liveRefresh">Refresh weather</button>
+    </div>
+    <div class="seg baseseg" id="liveBaseSeg"><button data-b="dark" class="on">Dark</button><button data-b="sat">Satellite</button><button data-b="streets">Streets</button></div>
+  </section>
+
+  <!-- ===================== FUEL ===================== -->
+  <section id="scr-fuel" hidden>
+    <h2>Fuel</h2>
+    <p class="sub">Every time you fill up: type the <b>odometer</b> number from your dash and how many <b>litres</b> went in. For an exact figure, <b>fill right to full</b> and keep the tick on — then economy is measured tank-to-tank.</p>
+    <div class="stats three">
+      <div class="cell"><div class="k">Last fill</div><div class="v" id="fLast">—<small>km/L</small></div></div>
+      <div class="cell"><div class="k">Average</div><div class="v" id="fAvg">—<small>km/L</small></div></div>
+      <div class="cell"><div class="k">L/100<span id="fU2">km</span></div><div class="v" id="fL100">—</div></div>
+    </div>
+    <div class="card">
+      <div class="row">
+        <label class="fld"><span>Odometer (<span class="fuU">km</span>)</span><input id="fuelOdo" type="number" inputmode="decimal" placeholder="e.g. 12840"></label>
+        <label class="fld">Litres filled<input id="fuelLit" type="number" inputmode="decimal" placeholder="e.g. 7.2"></label>
+      </div>
+      <label class="fld">Fuel grade
+        <select id="fuelGrade" class="sel">
+          <option>Shell V-Power</option>
+          <option>Shell V-Power Racing</option>
+          <option>Shell FuelSave 95</option>
+          <option>Shell FuelSave 98</option>
+          <option>Esso Synergy Supreme+ 98</option>
+          <option>Esso Synergy Extra 95</option>
+          <option>Caltex Platinum 98</option>
+          <option>Caltex Silver 95</option>
+          <option>Sinopec 95</option>
+          <option>Sinopec 98</option>
+          <option>Other</option>
+        </select>
+      </label>
+      <label class="fld">Price paid (optional)<input id="fuelPrice" type="number" inputmode="decimal" placeholder="e.g. 18.50"></label>
+      <label class="chk"><input type="checkbox" id="fuelFull" checked> I filled the tank right to full</label>
+      <button class="bigbtn save" id="fuelAdd">⛽ &nbsp;Add this fill-up</button>
+    </div>
+    <div><div class="caption" style="margin-bottom:8px">Fill-ups</div><div class="list" id="fuelList"></div></div>
+  </section>
+
+  <!-- ===================== BACKUP / SETUP ===================== -->
+  <section id="scr-backup" hidden>
+    <h2>Backup</h2>
+    <div class="okbox" id="autoSaveLine">✓ Your rides are saved automatically on this phone.</div>
+
+    <div class="card">
+      <h3>💾 Save &amp; restore</h3>
+      <p class="sub">A backup is <b>one small file</b> with all your rides and fuel. Save it to your phone (Files app) or email it to yourself. If you ever clear Safari or change phone, tap <b>Restore</b> and pick that file to get everything back.</p>
+      <button class="bigbtn save" id="saveBtn2">💾 &nbsp;Save a backup file</button>
+      <div class="hint" id="lastBackupLine">Not backed up yet</div>
+      <button class="bigbtn load" id="restoreBtn2">📂 &nbsp;Restore from a file</button>
+      <div class="hint">Restoring <b>adds</b> rides from the file — it never deletes what you already have.</div>
+      <input type="file" id="restoreFile" accept=".json,application/json,text/plain" hidden>
+      <details>
+        <summary class="caption" style="cursor:pointer">Other ways (paste text)</summary>
+        <div class="row" style="margin-top:10px">
+          <button class="btn" id="copyTextBtn">Copy backup as text</button>
+          <button class="btn" id="pasteTextBtn">Paste text to restore</button>
+        </div>
+      </details>
+    </div>
+
+    <div class="note" id="homeTip">
+      ⚠️ <b>Do this once:</b> add this page to your Home Screen so your phone never deletes your rides.
+      In Safari tap the <b>Share</b> button <span class="pill">▵</span>, scroll down, tap <b>Add to Home Screen</b>, then open it from that icon from now on.
+    </div>
+
+    <div class="card">
+      <h3>⚙️ Settings</h3>
+      <div class="setrow">
+        <span class="sub">Distance unit</span>
+        <div class="seg" id="unitSeg"><button data-u="km" class="on">km</button><button data-u="mi">mi</button></div>
+      </div>
+      <div class="setrow">
+        <span class="sub">Phone mount</span>
+        <div class="seg" id="mountSeg"><button data-m="portrait" class="on">Portrait</button><button data-m="landscape">Landscape</button></div>
+      </div>
+      <div class="setrow">
+        <span class="sub">Keep screen on while riding</span>
+        <div class="seg" id="awakeSeg"><button data-a="on" class="on">On</button><button data-a="off">Off</button></div>
+      </div>
+      <div class="setrow">
+        <span class="sub">Rain alerts while riding <span class="pill">needs internet</span></span>
+        <div class="seg" id="rainSeg"><button data-r="on" class="on">On</button><button data-r="off">Off</button></div>
+      </div>
+      <p class="sub">Lean comes from the phone's tilt — mount it firmly, and on the recording screen tap <b>Set upright</b> while stopped to zero it.</p>
+    </div>
+  </section>
+</main>
+
+<!-- bottom nav -->
+<nav class="bottomnav" id="bottomNav">
+  <button id="navTrips" class="on" data-scr="scr-trips"><span class="ic">🏍️</span>Rides</button>
+  <button id="navFuel" data-scr="scr-fuel"><span class="ic">⛽</span>Fuel</button>
+  <button id="navBackup" data-scr="scr-backup"><span class="ic">💾</span>Backup</button>
+</nav>
+
+<!-- odometer prompt modal -->
+<div class="scrim" id="scrim">
+  <div class="modal">
+    <h3 id="mTitle">Odometer now</h3>
+    <p id="mSub">Read the number off your bike's dash.</p>
+    <label class="fld"><span id="mLabel">Odometer (km)</span><input id="mOdo" type="number" inputmode="decimal" placeholder="e.g. 12800"></label>
+    <div class="row">
+      <button class="btn ghost" id="mCancel">Skip</button>
+      <button class="btn go" id="mOk">Start ride</button>
+    </div>
+  </div>
+</div>
+
+<!-- text fallback modal -->
+<div class="scrim" id="scrim2">
+  <div class="modal">
+    <h3 id="m2Title">Backup text</h3>
+    <p class="sub" id="m2Sub">Select all, copy, and keep it somewhere safe (Notes or Mail).</p>
+    <textarea id="m2Text" readonly></textarea>
+    <div class="row">
+      <button class="btn go" id="m2Copy">Copy</button>
+      <button class="btn ghost" id="m2Close">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function(){
+"use strict";
+var $=function(s){return document.getElementById(s)};
+var LS={trips:'ridelog.trips.v1', fuel:'ridelog.fuel.v1', cfg:'ridelog.cfg.v1'};
+
+/* ---------- storage (defensive) ---------- */
+function load(k,def){try{var r=localStorage.getItem(k);return r?JSON.parse(r):def;}catch(e){return def;}}
+function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
+try{ if(navigator.storage&&navigator.storage.persist){navigator.storage.persist().catch(function(){});} }catch(e){}
+
+var cfg=load(LS.cfg,{unit:'km',mount:'portrait',keepAwake:'on',lastGrade:'Shell V-Power',lastBackup:null,tipDismiss:false});
+if(!cfg.keepAwake)cfg.keepAwake='on';
+if(!cfg.lastGrade)cfg.lastGrade='Shell V-Power';
+if(!cfg.rainAlerts)cfg.rainAlerts='on';
+if(!cfg.basemap)cfg.basemap='dark';
+var trips=load(LS.trips,[]);
+var fuel=load(LS.fuel,[]);
+
+/* ---------- units ---------- */
+function uLabel(){return cfg.unit;}
+function kmTo(x){return cfg.unit==='mi'?x*0.621371:x;}
+function toKm(x){return cfg.unit==='mi'?x/0.621371:x;}
+function spd(kmh){return cfg.unit==='mi'?kmh*0.621371:kmh;}
+function fmt(n,d){n=(isFinite(n)?n:0);return n.toFixed(d==null?0:d);}
+
+/* ---------- toast ---------- */
+function toast(msg){var t=$('toast');t.textContent=msg;t.classList.add('on');clearTimeout(t._h);t._h=setTimeout(function(){t.classList.remove('on');},2800);}
+
+/* ---------- online indicator ---------- */
+function updateNet(){var on=navigator.onLine;$('netDot').className='dot '+(on?'ok':'');$('netTxt').textContent=on?'online':'offline';}
+window.addEventListener('online',updateNet);window.addEventListener('offline',updateNet);updateNet();
+
+/* ---------- navigation ---------- */
+var SCREENS=['scr-trips','scr-record','scr-trip','scr-fuel','scr-backup','scr-map'];
+var NAVSCR={'scr-trips':1,'scr-fuel':1,'scr-backup':1};
+function show(id){
+  SCREENS.forEach(function(s){$(s).hidden=(s!==id);});
+  $('bottomNav').classList.toggle('hide',!NAVSCR[id]);
+  $('navTrips').classList.toggle('on',id==='scr-trips');
+  $('navFuel').classList.toggle('on',id==='scr-fuel');
+  $('navBackup').classList.toggle('on',id==='scr-backup');
+  if(id!=='scr-map'&&liveGeo!=null){try{navigator.geolocation.clearWatch(liveGeo);}catch(e){}liveGeo=null;}
+  window.scrollTo(0,0);
+}
+$('navTrips').onclick=function(){show('scr-trips');renderTrips();};
+$('navFuel').onclick=function(){show('scr-fuel');renderFuel();};
+$('navBackup').onclick=function(){show('scr-backup');refreshBackup();};
+
+/* ---------- settings segments ---------- */
+function wireSeg(segId,key,render){
+  var seg=$(segId);
+  seg.querySelectorAll('button').forEach(function(b){
+    var val=b.getAttribute('data-u')||b.getAttribute('data-m')||b.getAttribute('data-a')||b.getAttribute('data-r');
+    b.onclick=function(){
+      [].forEach.call(seg.children,function(c){c.classList.remove('on');});
+      b.classList.add('on'); cfg[key]=val; save(LS.cfg,cfg); if(render)render();
+    };
+    b.classList.toggle('on',val===cfg[key]);
+  });
+}
+wireSeg('unitSeg','unit',function(){applyUnitLabels();renderTrips();renderFuel();toast('Unit: '+uLabel());});
+wireSeg('mountSeg','mount',null);
+wireSeg('awakeSeg','keepAwake',null);
+wireSeg('rainSeg','rainAlerts',null);
+
+function applyUnitLabels(){
+  function set(id,v){var e=$(id); if(e)e.textContent=v;}
+  set('sumDistU',uLabel()); set('rDistU',uLabel());
+  set('rSpeedU',cfg.unit==='mi'?'MPH':'KM/H'); set('fU2',uLabel());
+  [].forEach.call(document.querySelectorAll('.fuU'),function(e){e.textContent=uLabel();});
+}
+
+/* ================= RECORDING ================= */
+var rec=null, geoId=null, wakeLock=null, timer=null;
+var leanZero={gamma:0,beta:0}, curLean=0, curG=1;
+var recRainTimer=null, rainMutedUntil=0, prevLive=null, lastRainChk=0, actx=null;
+
+function startFlow(){
+  openOdoModal('Odometer before ride','Read it off your dash so fuel use can be worked out. You can skip it.',
+    uLabel(),'Start ride',function(odo){beginRide(odo);});
+}
+function beginRide(startOdo){
+  try{
+    if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){DeviceOrientationEvent.requestPermission().catch(function(){});}
+    if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){DeviceMotionEvent.requestPermission().catch(function(){});}
+  }catch(e){}
+  window.addEventListener('deviceorientation',onOrient,true);
+  window.addEventListener('devicemotion',onMotion,true);
+
+  rec={startTs:Date.now(), startOdo:(startOdo==null?null:toKm(startOdo)), unit:cfg.unit,
+       track:[], distM:0, lastLat:null,lastLon:null,lastAlt:null, altGain:0,
+       maxSpeed:0, maxLean:0, maxG:1, lastPush:0};
+  $('ptCount').textContent='0 pts';
+  $('gpsDot').className='dot'; $('gpsTxt').textContent='waiting for GPS…';
+  $('rSpeed').textContent='0'; $('rDist').textContent='0.0'; $('rTime').textContent='0:00';
+  $('rMaxS').textContent='0'; $('rMaxL').textContent='0°'; $('rG').innerHTML='1.0<small>g</small>';
+  drawRoute('liveTrace',[]);
+
+  if(navigator.geolocation){
+    geoId=navigator.geolocation.watchPosition(onPos,onGeoErr,{enableHighAccuracy:true,maximumAge:1000,timeout:20000});
+  }else{ $('gpsTxt').textContent='no GPS on this browser'; }
+  requestWake();
+  timer=setInterval(tickTime,1000);
+  setRainWarn(null);
+  recRainTimer=setInterval(recRainCheck,180000); setTimeout(recRainCheck,20000);
+  $('recBadge').textContent='● RECORDING';
+  show('scr-record');
+}
+function onPos(p){
+  if(!rec)return;
+  var c=p.coords, now=Date.now();
+  $('gpsDot').className='dot '+(c.accuracy<=25?'ok':'warn');
+  $('gpsTxt').textContent='GPS ±'+fmt(c.accuracy)+'m';
+  var kmh=(c.speed!=null&&c.speed>=0)?c.speed*3.6:null;
+  if(kmh!=null){ $('rSpeed').textContent=fmt(spd(kmh)); if(kmh>rec.maxSpeed){rec.maxSpeed=kmh;$('rMaxS').textContent=fmt(spd(kmh));}}
+  if(rec.lastLat!=null){var m=hav(rec.lastLat,rec.lastLon,c.latitude,c.longitude); if(isFinite(m)&&m<400){rec.distM+=m;} if(m>3)rec.brg=bearing([rec.lastLat,rec.lastLon],[c.latitude,c.longitude]);}
+  rec.lastLat=c.latitude; rec.lastLon=c.longitude;
+  if(c.altitude!=null){ if(rec.lastAlt!=null){var da=c.altitude-rec.lastAlt; if(da>1)rec.altGain+=da;} rec.lastAlt=c.altitude; }
+  $('rDist').innerHTML=fmt(kmTo(rec.distM/1000),1)+'<small>'+uLabel()+'</small>';
+  if(now-rec.lastPush>=950){
+    rec.lastPush=now;
+    rec.track.push([Math.round((now-rec.startTs)/1000),+c.latitude.toFixed(5),+c.longitude.toFixed(5),
+      kmh!=null?+kmh.toFixed(1):0,+curLean.toFixed(1),c.altitude!=null?Math.round(c.altitude):null]);
+    $('ptCount').textContent=rec.track.length+' pts';
+    if(rec.track.length%2===0) drawRoute('liveTrace',rec.track);
+  }
+}
+function onGeoErr(e){ if(!rec)return; $('gpsDot').className='dot'; $('gpsTxt').textContent='GPS: '+e.message; }
+
+function mountRaw(e){ return cfg.mount==='landscape'?(e.beta||0):(e.gamma||0); }
+function onOrient(e){
+  var raw=mountRaw(e), zero=cfg.mount==='landscape'?leanZero.beta:leanZero.gamma;
+  curLean=Math.max(-60,Math.min(60,raw-zero));
+  if(rec){ var a=Math.abs(curLean);
+    if(a>rec.maxLean){rec.maxLean=a;$('rMaxL').textContent=fmt(a)+'°';}
+    $('rLean').textContent=fmt(a)+'° '+(curLean<0?'L':'R');
+    $('rLeanCell').classList.toggle('hi',a>40);
+  }
+}
+function onMotion(e){
+  var a=e.accelerationIncludingGravity; if(!a)return;
+  curG=Math.sqrt((a.x||0)*(a.x||0)+(a.y||0)*(a.y||0)+(a.z||0)*(a.z||0))/9.81;
+  if(rec){ if(curG>rec.maxG)rec.maxG=curG; $('rG').innerHTML=fmt(curG,1)+'<small>g</small>'; }
+}
+$('calBtn').onclick=function(){
+  var h=function(e){ leanZero.gamma=e.gamma||0; leanZero.beta=e.beta||0;
+    window.removeEventListener('deviceorientation',h,true);
+    $('calBtn').textContent='Zeroed ✓'; setTimeout(function(){$('calBtn').textContent='Set upright (zero the lean)';},1200);
+  };
+  window.addEventListener('deviceorientation',h,true);
+};
+function tickTime(){ if(!rec)return; $('rTime').textContent=mmss(Math.floor((Date.now()-rec.startTs)/1000)); }
+
+function stopRide(){
+  openOdoModal('Odometer after ride','Enter the reading now to measure this ride by the dash. You can skip it.',
+    uLabel(),'Save ride',function(endOdo){finishRide(endOdo);});
+}
+function finishRide(endOdo){
+  if(geoId!=null&&navigator.geolocation){navigator.geolocation.clearWatch(geoId);} geoId=null;
+  window.removeEventListener('deviceorientation',onOrient,true);
+  window.removeEventListener('devicemotion',onMotion,true);
+  if(timer){clearInterval(timer);timer=null;}
+  if(recRainTimer){clearInterval(recRainTimer);recRainTimer=null;} setRainWarn(null);
+  releaseWake();
+  var endTs=Date.now(), durS=Math.round((endTs-rec.startTs)/1000);
+  var trip={ id:'t'+rec.startTs, startTs:rec.startTs, endTs:endTs, durS:durS, unit:rec.unit,
+    startOdo:rec.startOdo, endOdo:(endOdo==null?null:toKm(endOdo)),
+    distKm:rec.distM/1000, maxSpeedKmh:rec.maxSpeed,
+    avgSpeedKmh: durS>0?(rec.distM/1000)/(durS/3600):0,
+    maxLean:rec.maxLean, maxG:rec.maxG, altGainM:Math.round(rec.altGain), track:rec.track };
+  trips.unshift(trip);
+  if(!save(LS.trips,trips)){ trips.shift(); toast('Storage full — save a backup and delete an old ride'); }
+  rec=null; $('recBadge').textContent='RIDE LOGGER · PHONE';
+  renderTrips(); openTrip(trip.id); toast('Ride saved ✓');
+}
+$('startBtn').onclick=startFlow;
+$('stopBtn').onclick=stopRide;
+
+/* ---------- wake lock ---------- */
+function requestWake(){ if(cfg.keepAwake==='off')return;
+  try{if('wakeLock' in navigator){navigator.wakeLock.request('screen').then(function(w){wakeLock=w;}).catch(function(){});}}catch(e){}}
+function releaseWake(){try{if(wakeLock){wakeLock.release();wakeLock=null;}}catch(e){}}
+document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'&&rec)requestWake();});
+
+/* ---------- math ---------- */
+function hav(a,b,c,d){var R=6371000,t=Math.PI/180,dLat=(c-a)*t,dLon=(d-b)*t;
+  var x=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(a*t)*Math.cos(c*t)*Math.sin(dLon/2)*Math.sin(dLon/2);
+  return 2*R*Math.asin(Math.min(1,Math.sqrt(x)));}
+function mmss(s){var m=Math.floor(s/60),ss=s%60;return m+':'+(ss<10?'0':'')+ss;}
+function hm(s){var h=Math.floor(s/3600),m=Math.round((s%3600)/60);return h>0?(h+'h '+m+'m'):(m+'m');}
+function dateStr(ts){var d=new Date(ts);return d.toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
+
+/* ================= RIDES LIST ================= */
+function tripDistShown(t){ if(t.startOdo!=null&&t.endOdo!=null&&t.endOdo>=t.startOdo)return t.endOdo-t.startOdo; return t.distKm; }
+function renderTrips(){
+  applyUnitLabels();
+  $('sumRides').textContent=trips.length;
+  var totKm=trips.reduce(function(a,t){return a+tripDistShown(t);},0);
+  $('sumDist').innerHTML=fmt(kmTo(totKm),totKm<100?1:0)+'<small>'+uLabel()+'</small>';
+  var eco=fuelAverage();
+  $('sumEco').innerHTML=(eco?fmt(kmTo(eco),1):'—')+'<small>'+uLabel()+'/L</small>';
+  $('savedHint').textContent=trips.length+' ride'+(trips.length===1?'':'s')+' saved on this phone';
+  updateTip();
+  var list=$('tripList');
+  if(!trips.length){ list.innerHTML='<div class="empty">No rides yet.<br>Tap <b>Start ride</b> to record your route, lean and speed.</div>'; return; }
+  list.innerHTML='';
+  trips.forEach(function(t){
+    var el=document.createElement('button'); el.className='item';
+    el.innerHTML='<div class="main"><div class="t">'+dateStr(t.startTs)+'</div>'+
+      '<div class="d">'+hm(t.durS)+' · max lean '+fmt(t.maxLean)+'° · '+t.track.length+' pts</div></div>'+
+      '<div class="r"><b>'+fmt(kmTo(tripDistShown(t)),1)+'</b><span>'+uLabel()+'</span></div>';
+    el.onclick=function(){openTrip(t.id);};
+    list.appendChild(el);
+  });
+}
+
+/* ================= MAPS (Leaflet) ================= */
+var Maps={}, liveGeo=null, liveCentered=false;
+/* Free, no-API-key basemaps (CARTO now requires a paid key). */
+var BASEMAPS={
+  dark:{url:'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',opts:{maxZoom:19,maxNativeZoom:16,attribution:'Tiles © Esri'}},
+  sat:{url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',opts:{maxZoom:19,maxNativeZoom:19,attribution:'Imagery © Esri'}},
+  streets:{url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',opts:{subdomains:'abc',maxZoom:19,attribution:'© OpenStreetMap'}}
+};
+function haveMaps(){return !!window.L;}
+function ensureMap(elId,infoId){
+  if(!haveMaps())return null;
+  if(Maps[elId])return Maps[elId];
+  try{
+    var map=L.map(elId,{zoomControl:true,attributionControl:true});
+    var bm=BASEMAPS[cfg.basemap]||BASEMAPS.dark;
+    var obj={map:map, info:$(infoId), cloudsOn:false, wxTime:null, temp:null};
+    obj.tile=L.tileLayer(bm.url,bm.opts).addTo(map);
+    map.createPane('clouds'); var cp=map.getPane('clouds');
+    cp.style.zIndex=350; cp.style.filter='blur(2px)'; cp.style.pointerEvents='none';
+    obj.route=L.layerGroup().addTo(map); obj.clouds=L.layerGroup().addTo(map); obj.icons=L.layerGroup().addTo(map); obj.me=L.layerGroup().addTo(map);
+    Maps[elId]=obj; return obj;
+  }catch(e){ return null; }
+}
+function setBasemap(obj,key){ if(!obj||!BASEMAPS[key])return; try{ if(obj.tile)obj.map.removeLayer(obj.tile);
+  var bm=BASEMAPS[key]; obj.tile=L.tileLayer(bm.url,bm.opts).addTo(obj.map); obj.tile.bringToBack(); }catch(e){} }
+function updateBasemapSegs(){ ['tripBaseSeg','liveBaseSeg'].forEach(function(id){ var seg=$(id); if(!seg)return;
+  [].forEach.call(seg.children,function(b){ b.classList.toggle('on', b.getAttribute('data-b')===cfg.basemap); }); }); }
+function switchBasemap(key){ if(!BASEMAPS[key])return; cfg.basemap=key; save(LS.cfg,cfg);
+  Object.keys(Maps).forEach(function(k){ setBasemap(Maps[k],key); }); updateBasemapSegs(); }
+function wireBasemapSegs(){ ['tripBaseSeg','liveBaseSeg'].forEach(function(id){ var seg=$(id); if(!seg)return;
+  [].forEach.call(seg.children,function(b){ b.onclick=function(){ switchBasemap(b.getAttribute('data-b')); }; }); }); updateBasemapSegs(); }
+wireBasemapSegs();
+function drawRouteOnMap(obj,track){
+  obj.route.clearLayers();
+  var pts=track.filter(function(p){return p[1]&&p[2];}).map(function(p){return [p[1],p[2]];});
+  if(!pts.length)return false;
+  if(pts.length>=2) L.polyline(pts,{color:'#2fd27a',weight:4,opacity:.95}).addTo(obj.route);
+  L.circleMarker(pts[0],{radius:6,color:'#07140d',weight:2,fillColor:'#4aa8ff',fillOpacity:1}).addTo(obj.route);
+  L.circleMarker(pts[pts.length-1],{radius:6,color:'#160303',weight:2,fillColor:'#ef5a5a',fillOpacity:1}).addTo(obj.route);
+  try{ obj.map.fitBounds(L.latLngBounds(pts).pad(0.18)); }catch(e){}
+  return true;
+}
+function wxStyle(txt){
+  var s=(txt||'').toLowerCase();
+  var wet=/rain|shower|drizzle/.test(s);
+  if(/thunder/.test(s)) return {icon:'⛈️', fill:'#e4572e', op:0.52, stroke:'#bf3b1b', r:3800};
+  if(wet && /heavy/.test(s)) return {icon:'🌧️', fill:'#f2992e', op:0.48, stroke:'#cf7a1c', r:3700};
+  if(wet && /(light|passing|slight|drizzle)/.test(s)) return {icon:'🌦️', fill:'#7ec8ef', op:0.42, stroke:'#4f9fd1', r:3400};
+  if(wet) return {icon:'🌧️', fill:'#2f86e0', op:0.46, stroke:'#1e68bd', r:3600};
+  if(/hazy|haze|mist|fog/.test(s)) return {icon:'🌫️', fill:'#d8cda3', op:0.34, stroke:'#b9ac7e', r:3500};
+  if(/partly/.test(s)) return {icon:'⛅', fill:'#e3e9ef', op:0.20, stroke:'#c3ccd6', r:3200};
+  if(/cloudy|overcast/.test(s)) return {icon:'☁️', fill:'#c6cfd9', op:0.34, stroke:'#a3aec0', r:3500};
+  if(/wind/.test(s)) return {icon:'🌬️', fill:'#e3e9ef', op:0.16, stroke:'#c3ccd6', r:3000};
+  if(/fair|sunny|clear|warm/.test(s)) return {icon:/night/.test(s)?'🌙':'☀️'};
+  return {icon:'☁️', fill:'#c6cfd9', op:0.26, stroke:'#a3aec0', r:3200};
+}
+function fetchJson(u){ return fetch(u,{cache:'no-store'}).then(function(r){ if(!r.ok)throw 0; return r.json(); }); }
+function parseForecast(j){
+  var d=j.data||j;
+  var meta=d.area_metadata||[], items=d.items||d.records||[];
+  var fc=(items[0]&&items[0].forecasts)||[];
+  var fmap={}; fc.forEach(function(f){fmap[f.area]=f.forecast;});
+  var areas=meta.filter(function(m){return m.label_location;}).map(function(m){
+    return {name:m.name,lat:m.label_location.latitude,lng:m.label_location.longitude,forecast:fmap[m.name]||''};});
+  return {areas:areas, updated:(items[0]&&(items[0].update_timestamp||items[0].timestamp))||null};
+}
+function fetchForecast(){
+  return fetchJson('https://api.data.gov.sg/v1/environment/2-hour-weather-forecast').then(parseForecast)
+    .catch(function(){ return fetchJson('https://api-open.data.gov.sg/v2/real-time/api/two-hr-forecast').then(parseForecast); });
+}
+function nearestTemp(center){
+  return fetchJson('https://api.data.gov.sg/v1/environment/air-temperature').then(function(j){
+    var d=j.data||j, st=(j.metadata&&j.metadata.stations)||d.stations||[], rd=(j.items&&j.items[0]&&j.items[0].readings)||d.readings||[];
+    var vmap={}; rd.forEach(function(r){vmap[r.station_id||r.stationId]=r.value;});
+    var best=null,bd=1e9;
+    st.forEach(function(s){var loc=s.location; if(!loc)return; var v=vmap[s.id]; if(v==null)return;
+      var dd=Math.abs(loc.latitude-center[0])+Math.abs(loc.longitude-center[1]); if(dd<bd){bd=dd;best=v;}});
+    return best;
+  }).catch(function(){return null;});
+}
+function renderWx(obj){
+  if(!obj.info)return;
+  var parts=[];
+  if(obj.wxTime) parts.push('☁️ NEA '+obj.wxTime);
+  if(obj.temp!=null) parts.push(Math.round(obj.temp)+'°C');
+  if(parts.length){ obj.info.textContent=parts.join('  ·  '); obj.info.style.display='inline-flex'; }
+  else if(obj.cloudsOn){ obj.info.textContent='Weather needs internet'; obj.info.style.display='inline-flex'; }
+  else { obj.info.style.display='none'; }
+}
+function loadClouds(obj,center){
+  obj.clouds.clearLayers(); if(obj.icons)obj.icons.clearLayers(); obj.wxTime=null; obj.temp=null;
+  if(obj.info){obj.info.textContent='Loading NEA weather…';obj.info.style.display='inline-flex';}
+  getForecast().then(function(fc){
+    if(!fc)throw 0;
+    if(!fc||!fc.areas.length)throw 0;
+    fc.areas.forEach(function(a){ var st=wxStyle(a.forecast);
+      if(st.fill){ L.circle([a.lat,a.lng],{pane:'clouds',radius:st.r,stroke:true,color:st.stroke,weight:1,opacity:0.55,fillColor:st.fill,fillOpacity:st.op}).addTo(obj.clouds); }
+      if(st.icon && obj.icons){ L.marker([a.lat,a.lng],{icon:L.divIcon({className:'wxicon',html:'<span>'+st.icon+'</span>',iconSize:[26,26],iconAnchor:[13,13]}),interactive:false,keyboard:false}).addTo(obj.icons); }
+    });
+    if(fc.updated){var dt=new Date(fc.updated); obj.wxTime=dt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
+    renderWx(obj);
+    var c=center||(obj.map.getCenter&&[obj.map.getCenter().lat,obj.map.getCenter().lng]);
+    if(c) nearestTemp(c).then(function(v){ if(v!=null){obj.temp=v; renderWx(obj);} });
+  }).catch(function(){ renderWx(obj); });
+}
+function toggleClouds(obj,center,btn){
+  obj.cloudsOn=!obj.cloudsOn;
+  btn.textContent=(obj.cloudsOn?'☁️ Weather: on':'☁️ Weather: off');
+  if(obj.cloudsOn){ loadClouds(obj,center); }
+  else { obj.clouds.clearLayers(); if(obj.icons)obj.icons.clearLayers(); obj.wxTime=null; obj.temp=null; renderWx(obj); }
+}
+
+/* ================= RAIN WARNING ================= */
+/* A web page cannot read your Google Maps route (iOS sandbox forbids it). Instead this
+   watches your GPS position + direction of travel and checks NEA rain areas ahead. */
+var wxCache={t:0,p:null};
+function getForecast(){ var now=Date.now();
+  if(wxCache.p&&(now-wxCache.t)<120000) return wxCache.p;
+  var p=fetchForecast(); wxCache.p=p; wxCache.t=now; p.catch(function(){wxCache.p=null;}); return p; }
+function isRain(f){ return /rain|shower|thunder|drizzle/i.test(f||''); }
+function nearestArea(areas,lat,lng){ var best=null,bd=1e9; areas.forEach(function(a){var d=Math.abs(a.lat-lat)+Math.abs(a.lng-lng); if(d<bd){bd=d;best=a;}}); return best; }
+function destPoint(lat,lng,brg,km){ var th=brg*Math.PI/180; var dLat=(km*Math.cos(th))/111.32; var dLng=(km*Math.sin(th))/(111.32*Math.cos(lat*Math.PI/180)); return [lat+dLat,lng+dLng]; }
+function bearing(a,b){ var la1=a[0]*Math.PI/180,la2=b[0]*Math.PI/180,dLo=(b[1]-a[1])*Math.PI/180;
+  var y=Math.sin(dLo)*Math.cos(la2), x=Math.cos(la1)*Math.sin(la2)-Math.sin(la1)*Math.cos(la2)*Math.cos(dLo);
+  return (Math.atan2(y,x)*180/Math.PI+360)%360; }
+function evalRain(pos,brg){
+  return getForecast().then(function(fc){
+    if(!fc||!fc.areas.length) return null;
+    var h=nearestArea(fc.areas,pos[0],pos[1]); if(h&&isRain(h.forecast)) return {level:'here',area:h.name,km:0};
+    if(brg!=null){ var ds=[1,2,3,4,6]; for(var i=0;i<ds.length;i++){ var pt=destPoint(pos[0],pos[1],brg,ds[i]); var a=nearestArea(fc.areas,pt[0],pt[1]); if(a&&isRain(a.forecast)) return {level:'ahead',area:a.name,km:ds[i]}; } }
+    return {level:'clear'};
+  }).catch(function(){return null;});
+}
+function applyRain(r){ if(r&&(r.level==='here'||r.level==='ahead'))setRainWarn(r); else if(r&&r.level==='clear')setRainWarn(null); }
+function setRainWarn(r){
+  var el=$('rainWarn');
+  if(r&&(r.level==='here'||r.level==='ahead')){
+    el.innerHTML='🧥 <b>Put your raincoat on.</b> <span>'+(r.level==='here'?('Rain where you are ('+r.area+').'):('Rain ~'+r.km+' km ahead, near '+r.area+'.'))+'</span><button id="rainX">Dismiss</button>';
+    el.classList.remove('hide'); el.classList.add('on');
+    $('rainX').onclick=function(){ el.classList.add('hide'); el.classList.remove('on'); rainMutedUntil=Date.now()+900000; };
+    beep();
+  } else { el.classList.add('hide'); el.classList.remove('on'); }
+}
+function beep(){ try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); var o=actx.createOscillator(),g=actx.createGain();
+  o.connect(g);g.connect(actx.destination);o.type='sine';o.frequency.value=880;g.gain.value=0.0001;
+  o.start(); g.gain.exponentialRampToValueAtTime(0.28,actx.currentTime+0.02); g.gain.exponentialRampToValueAtTime(0.0001,actx.currentTime+0.55); o.stop(actx.currentTime+0.57);
+}catch(e){} }
+function recRainCheck(){ if(!rec||cfg.rainAlerts==='off'||!navigator.onLine||rec.lastLat==null)return; if(Date.now()<rainMutedUntil)return;
+  evalRain([rec.lastLat,rec.lastLon], rec.brg!=null?rec.brg:null).then(applyRain); }
+
+/* ================= TRIP DETAIL ================= */
+var curTrip=null;
+function trackCenter(track){ var p=track.filter(function(x){return x[1]&&x[2];}); return p.length?[p[0][1],p[0][2]]:null; }
+function openTrip(id){
+  curTrip=trips.filter(function(t){return t.id===id;})[0]; if(!curTrip)return;
+  var t=curTrip;
+  $('tripTitle').textContent='Ride · '+fmt(kmTo(tripDistShown(t)),1)+' '+uLabel();
+  $('tripWhen').textContent=dateStr(t.startTs)+'  —  '+new Date(t.endTs).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  drawRoute('route',t.track);
+  var odoDist=(t.startOdo!=null&&t.endOdo!=null&&t.endOdo>=t.startOdo)?(t.endOdo-t.startOdo):null;
+  var cells=[['Duration',hm(t.durS),''],['Dist (GPS)',fmt(kmTo(t.distKm),1),uLabel()],
+    ['Dist (odo)',odoDist!=null?fmt(kmTo(odoDist),1):'—',uLabel()],
+    ['Avg speed',fmt(spd(t.avgSpeedKmh)),cfg.unit==='mi'?'mph':'km/h'],
+    ['Max speed',fmt(spd(t.maxSpeedKmh)),cfg.unit==='mi'?'mph':'km/h'],
+    ['Max lean',fmt(t.maxLean),'°'],['Max g',fmt(t.maxG,1),'g'],
+    ['Climb',fmt(t.altGainM),'m'],['Points',t.track.length,'']];
+  $('tripStats').innerHTML=cells.map(function(c){return '<div class="cell"><div class="k">'+c[0]+'</div><div class="v">'+c[1]+(c[2]?'<small>'+c[2]+'</small>':'')+'</div></div>';}).join('');
+  drawLine('chartSpeed',t.track,function(p){return spd(p[3]);},'#2fd27a',false);
+  drawLine('chartLean',t.track,function(p){return p[4];},'#4aa8ff',true);
+  show('scr-trip');
+
+  var obj=ensureMap('tripMap','tripWx');
+  var hasGps=t.track.filter(function(p){return p[1]&&p[2];}).length>=1;
+  if(obj&&hasGps){
+    $('tripMapWrap').classList.remove('hide'); $('route').classList.add('hide');
+    $('tripWxBtn').classList.remove('hide'); $('tripWxHint').classList.remove('hide');
+    obj.cloudsOn=false; obj.clouds.clearLayers(); obj.wxTime=null; obj.temp=null; renderWx(obj);
+    $('tripWxBtn').textContent='☁️ Weather: off';
+    setTimeout(function(){ try{obj.map.invalidateSize();}catch(e){} drawRouteOnMap(obj,t.track); },80);
+  }else{
+    $('tripMapWrap').classList.add('hide'); $('route').classList.remove('hide');
+    $('tripWxBtn').classList.add('hide'); $('tripWxHint').classList.add('hide');
+  }
+}
+$('tripBack').onclick=function(){show('scr-trips');renderTrips();};
+$('tripWxBtn').onclick=function(){ var obj=Maps['tripMap']; if(obj)toggleClouds(obj,curTrip?trackCenter(curTrip.track):null,$('tripWxBtn')); };
+$('delTrip').onclick=function(){
+  if(!curTrip)return;
+  if($('delTrip').textContent.indexOf('Sure')<0){ $('delTrip').textContent='Sure? Tap again to delete'; setTimeout(function(){$('delTrip').textContent='Delete this ride';},2600); return; }
+  trips=trips.filter(function(t){return t.id!==curTrip.id;});
+  save(LS.trips,trips); $('delTrip').textContent='Delete this ride'; show('scr-trips'); renderTrips(); toast('Ride deleted');
+};
+
+/* ================= LIVE MAP ================= */
+$('liveMapBtn').onclick=openLiveMap;
+$('mapBack').onclick=function(){show('scr-trips');renderTrips();};
+function openLiveMap(){
+  show('scr-map');
+  var obj=ensureMap('liveMap','liveWx');
+  if(!obj){ $('mapMsg').classList.remove('hide'); return; }
+  $('mapMsg').classList.add('hide'); liveCentered=false;
+  setTimeout(function(){ try{obj.map.invalidateSize();}catch(e){} try{obj.map.setView([1.3521,103.8198],11);}catch(e){} },80);
+  if(!obj.cloudsOn){ toggleClouds(obj,[1.3521,103.8198],$('liveWxBtn')); } else { $('liveWxBtn').textContent='☁️ Weather: on'; loadClouds(obj,[1.3521,103.8198]); }
+  if(navigator.geolocation){
+    liveGeo=navigator.geolocation.watchPosition(function(p){
+      var ll=[p.coords.latitude,p.coords.longitude];
+      obj.me.clearLayers();
+      L.circleMarker(ll,{radius:8,color:'#04120a',weight:3,fillColor:'#2fd27a',fillOpacity:1}).addTo(obj.me);
+      var now=Date.now();
+      if(now-lastRainChk>45000 && navigator.onLine && now>rainMutedUntil){ lastRainChk=now; var brg=prevLive?bearing(prevLive,ll):null; evalRain(ll,brg).then(applyRain); }
+      prevLive=ll;
+      if(!liveCentered){ try{obj.map.setView(ll,14);}catch(e){} liveCentered=true; if(obj.cloudsOn)nearestTemp(ll).then(function(v){if(v!=null){obj.temp=v;renderWx(obj);}}); }
+    },function(){},{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
+  }
+}
+$('liveWxBtn').onclick=function(){ var obj=Maps['liveMap']; if(obj)toggleClouds(obj,liveCentered?[obj.map.getCenter().lat,obj.map.getCenter().lng]:[1.3521,103.8198],$('liveWxBtn')); };
+$('liveRefresh').onclick=function(){ var obj=Maps['liveMap']; if(obj&&obj.cloudsOn){loadClouds(obj,[obj.map.getCenter().lat,obj.map.getCenter().lng]);toast('Weather refreshed');} };
+
+/* ---------- SVG route + charts (offline fallback) ---------- */
+function drawRoute(svgId,track){
+  var svg=$(svgId); svg.innerHTML='';
+  var pts=track.filter(function(p){return p[1]&&p[2];});
+  if(pts.length<2){ svg.innerHTML='<text x="170" y="86" fill="#5c6572" font-size="12" text-anchor="middle" font-family="sans-serif">'+(pts.length?'Recording…':'No GPS track yet')+'</text>'; return; }
+  var vb=svg.getAttribute('viewBox').split(' '), W=+vb[2], H=+vb[3], pad=16;
+  var lat0=pts[0][1]*Math.PI/180;
+  var xs=pts.map(function(p){return p[2]*Math.cos(lat0);}), ys=pts.map(function(p){return p[1];});
+  var minX=Math.min.apply(null,xs),maxX=Math.max.apply(null,xs),minY=Math.min.apply(null,ys),maxY=Math.max.apply(null,ys);
+  var dx=(maxX-minX)||1e-6, dy=(maxY-minY)||1e-6, sc=Math.min((W-2*pad)/dx,(H-2*pad)/dy);
+  var ox=(W-dx*sc)/2, oy=(H-dy*sc)/2;
+  function X(i){return ox+(xs[i]-minX)*sc;} function Y(i){return H-(oy+(ys[i]-minY)*sc);}
+  var d=''; for(var i=0;i<pts.length;i++){d+=(i?'L':'M')+X(i).toFixed(1)+' '+Y(i).toFixed(1)+' ';}
+  var ns='http://www.w3.org/2000/svg';
+  var path=document.createElementNS(ns,'path'); path.setAttribute('d',d);
+  path.setAttribute('fill','none'); path.setAttribute('stroke','#2fd27a'); path.setAttribute('stroke-width','2.5');
+  path.setAttribute('stroke-linejoin','round'); path.setAttribute('stroke-linecap','round'); svg.appendChild(path);
+  [['#4aa8ff',0],['#ef5a5a',pts.length-1]].forEach(function(c){
+    var cc=document.createElementNS(ns,'circle'); cc.setAttribute('cx',X(c[1])); cc.setAttribute('cy',Y(c[1]));
+    cc.setAttribute('r','4'); cc.setAttribute('fill',c[0]); svg.appendChild(cc);
+  });
+}
+function drawLine(id,track,fn,color,symmetric){
+  var svg=$(id); svg.innerHTML=''; var W=340,H=110,pad=12;
+  if(track.length<2){svg.innerHTML='<text x="170" y="58" fill="#5c6572" font-size="11" text-anchor="middle" font-family="sans-serif">no data</text>';return;}
+  var vals=track.map(fn), t0=track[0][0], t1=track[track.length-1][0]||1;
+  var mn=Math.min.apply(null,vals), mx=Math.max.apply(null,vals);
+  if(symmetric){var m=Math.max(Math.abs(mn),Math.abs(mx),5); mn=-m; mx=m;} else { mn=Math.min(0,mn); mx=mx||1; }
+  var dv=(mx-mn)||1, dt=(t1-t0)||1, ns='http://www.w3.org/2000/svg';
+  function X(t){return pad+(t-t0)/dt*(W-2*pad);} function Y(v){return H-pad-(v-mn)/dv*(H-2*pad);}
+  if(symmetric){var z=document.createElementNS(ns,'line');z.setAttribute('x1',pad);z.setAttribute('x2',W-pad);
+    z.setAttribute('y1',Y(0));z.setAttribute('y2',Y(0));z.setAttribute('stroke','#2a323c');z.setAttribute('stroke-width','1');svg.appendChild(z);}
+  var d=''; track.forEach(function(p,i){d+=(i?'L':'M')+X(p[0]).toFixed(1)+' '+Y(fn(p)).toFixed(1)+' ';});
+  var path=document.createElementNS(ns,'path'); path.setAttribute('d',d); path.setAttribute('fill','none');
+  path.setAttribute('stroke',color); path.setAttribute('stroke-width','2'); path.setAttribute('stroke-linejoin','round'); svg.appendChild(path);
+  var lbl=document.createElementNS(ns,'text'); lbl.setAttribute('x',W-pad); lbl.setAttribute('y',14);
+  lbl.setAttribute('fill','#8a93a0'); lbl.setAttribute('font-size','10'); lbl.setAttribute('text-anchor','end');
+  lbl.setAttribute('font-family','monospace'); lbl.textContent='peak '+fmt(symmetric?Math.max(Math.abs(mn),mx):mx,0); svg.appendChild(lbl);
+}
+
+/* ================= EXPORT ================= */
+function tripGPX(t){
+  var head='<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="RideLogger" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>Ride '+new Date(t.startTs).toISOString()+'</name><trkseg>\n';
+  var body=t.track.filter(function(p){return p[1]&&p[2];}).map(function(p){
+    var iso=new Date(t.startTs+p[0]*1000).toISOString(); var ele=p[5]!=null?('<ele>'+p[5]+'</ele>'):'';
+    return '<trkpt lat="'+p[1]+'" lon="'+p[2]+'">'+ele+'<time>'+iso+'</time></trkpt>';
+  }).join('\n');
+  return head+body+'\n</trkseg></trk></gpx>';
+}
+function tripCSV(t){
+  var rows=['t_s,lat,lon,speed_kmh,lean_deg,alt_m'];
+  t.track.forEach(function(p){rows.push([p[0],p[1],p[2],p[3],p[4],p[5]==null?'':p[5]].join(','));});
+  var meta='# Ride '+new Date(t.startTs).toISOString()+'\n# duration_s='+t.durS+' dist_gps_km='+t.distKm.toFixed(3)+
+    ' start_odo_km='+(t.startOdo==null?'':t.startOdo)+' end_odo_km='+(t.endOdo==null?'':t.endOdo)+
+    ' max_speed_kmh='+t.maxSpeedKmh.toFixed(1)+' max_lean_deg='+t.maxLean.toFixed(1)+' max_g='+t.maxG.toFixed(2)+'\n';
+  return meta+rows.join('\n');
+}
+function saveFile(filename,mime,text,title){
+  try{ if(navigator.canShare){ var file=new File([text],filename,{type:mime});
+    if(navigator.canShare({files:[file]})){ navigator.share({files:[file],title:title}).then(function(){}).catch(function(){}); return; } } }catch(e){}
+  try{ var blob=new Blob([text],{type:mime}); var url=URL.createObjectURL(blob);
+    var a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click();
+    setTimeout(function(){URL.revokeObjectURL(url);a.remove();},1500); toast('Saved ✓'); return; }catch(e){}
+  showText(title,text);
+}
+function showText(title,text){ $('m2Title').textContent=title; $('m2Sub').textContent='Select all, copy, and keep it safe (Notes or Mail).';
+  $('m2Text').value=text; $('m2Text').setAttribute('readonly',''); $('scrim2').classList.add('on'); wireCopyBack(); $('m2Text').focus(); $('m2Text').select(); }
+$('shareGpx').onclick=function(){ if(curTrip)saveFile('ride-'+curTrip.id+'.gpx','application/gpx+xml',tripGPX(curTrip),'Ride GPX'); };
+$('copyCsv').onclick=function(){ if(curTrip)saveFile('ride-'+curTrip.id+'.csv','text/csv',tripCSV(curTrip),'Ride CSV'); };
+function wireCopyBack(){ $('m2Copy').textContent='Copy'; $('m2Copy').onclick=function(){ $('m2Text').select(); try{document.execCommand('copy');}catch(e){} try{navigator.clipboard.writeText($('m2Text').value).catch(function(){});}catch(e){} $('m2Copy').textContent='Copied ✓'; setTimeout(function(){$('m2Copy').textContent='Copy';},1200); }; }
+$('m2Close').onclick=function(){ $('scrim2').classList.remove('on'); };
+
+/* ================= BACKUP / RESTORE ================= */
+function backupData(){ return {app:'FBN3086K',v:3,exported:new Date().toISOString(),cfg:cfg,trips:trips,fuel:fuel}; }
+function doSaveBackup(){
+  var txt=JSON.stringify(backupData());
+  var name='FBN3086K-rides-'+new Date().toISOString().slice(0,10)+'.json';
+  cfg.lastBackup=Date.now(); save(LS.cfg,cfg); refreshBackup();
+  saveFile(name,'application/json',txt,'FBN 3086K ride backup');
+}
+function mergeById(dst,src){ var have={}; dst.forEach(function(x){if(x&&x.id)have[x.id]=1;});
+  var n=0; (src||[]).forEach(function(x){ if(x&&x.id&&!have[x.id]){dst.push(x);have[x.id]=1;n++;} }); return n; }
+function importBackup(txt){
+  var d; try{ d=JSON.parse(txt); }catch(e){ toast('That file is not a backup'); return; }
+  if(!d||(!d.trips&&!d.fuel)){ toast('That file is not a backup'); return; }
+  var addT=mergeById(trips,d.trips); var addF=mergeById(fuel,d.fuel);
+  trips.sort(function(a,b){return b.startTs-a.startTs;});
+  save(LS.trips,trips); save(LS.fuel,fuel);
+  if(d.cfg&&d.cfg.lastGrade){cfg.lastGrade=d.cfg.lastGrade;save(LS.cfg,cfg);try{$('fuelGrade').value=cfg.lastGrade;}catch(e){}}
+  renderTrips(); renderFuel(); refreshBackup();
+  toast('Restored ✓ added '+addT+' ride'+(addT===1?'':'s')+(addF?(', '+addF+' fill-up'+(addF===1?'':'s')):''));
+}
+$('saveBtn2').onclick=doSaveBackup;
+$('restoreBtn2').onclick=function(){ $('restoreFile').click(); };
+$('restoreFile').onchange=function(ev){
+  var f=ev.target.files&&ev.target.files[0]; if(!f)return;
+  var rd=new FileReader(); rd.onload=function(){ importBackup(String(rd.result)); ev.target.value=''; };
+  rd.onerror=function(){ toast('Could not read that file'); ev.target.value=''; }; rd.readAsText(f);
+};
+$('copyTextBtn').onclick=function(){ showText('Backup text',JSON.stringify(backupData())); cfg.lastBackup=Date.now(); save(LS.cfg,cfg); refreshBackup(); };
+$('pasteTextBtn').onclick=function(){
+  $('m2Title').textContent='Paste backup text'; $('m2Sub').textContent='Paste the backup text below, then tap Restore.';
+  $('m2Text').value=''; $('m2Text').removeAttribute('readonly'); $('m2Text').placeholder='Paste here…';
+  $('scrim2').classList.add('on'); $('m2Copy').textContent='Restore';
+  $('m2Copy').onclick=function(){ importBackup($('m2Text').value); $('scrim2').classList.remove('on'); $('m2Text').setAttribute('readonly',''); };
+  $('m2Text').focus();
+};
+function refreshBackup(){
+  $('autoSaveLine').textContent='✓ '+trips.length+' ride'+(trips.length===1?'':'s')+' and '+fuel.length+' fill-up'+(fuel.length===1?'':'s')+' saved on this phone.';
+  if(cfg.lastBackup){ $('lastBackupLine').textContent='Last backup: '+dateStr(cfg.lastBackup); }
+  else { $('lastBackupLine').textContent='Not backed up yet'; }
+  var standalone=(window.navigator.standalone===true)||(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches);
+  $('homeTip').classList.toggle('hide',!!standalone);
+}
+function updateTip(){
+  var standalone=(window.navigator.standalone===true)||(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches);
+  var show=trips.length>0 && !cfg.tipDismiss && (!cfg.lastBackup || !standalone);
+  $('tipBanner').classList.toggle('hide',!show);
+}
+$('tipGoBackup').onclick=function(){ show('scr-backup'); refreshBackup(); };
+$('tipDismiss').onclick=function(){ cfg.tipDismiss=true; save(LS.cfg,cfg); updateTip(); };
+
+/* ================= FUEL ================= */
+function fuelSorted(){ return fuel.slice().sort(function(a,b){return a.odoKm-b.odoKm;}); }
+function fullIntervals(){ var s=fuelSorted(), fi=[]; for(var i=0;i<s.length;i++){ if(s[i].full)fi.push(i); }
+  var ivs=[]; for(var k=1;k<fi.length;k++){ var a=fi[k-1],b=fi[k],dist=s[b].odoKm-s[a].odoKm,lit=0;
+    for(var j=a+1;j<=b;j++){lit+=(s[j].litres||0);} if(dist>0&&lit>0)ivs.push({dist:dist,lit:lit}); } return ivs; }
+function fuelAverage(){ var ivs=fullIntervals();
+  if(ivs.length){ var d=0,l=0; ivs.forEach(function(x){d+=x.dist;l+=x.lit;}); return l>0?d/l:null; }
+  var s=fuelSorted(); if(s.length<2)return null; var dist=0,lit=0;
+  for(var i=1;i<s.length;i++){ var dd=s[i].odoKm-s[i-1].odoKm; if(dd>0&&s[i].litres>0){dist+=dd;lit+=s[i].litres;} } return lit>0?dist/lit:null; }
+function fuelLast(){ var ivs=fullIntervals(); if(ivs.length){ var x=ivs[ivs.length-1]; return x.dist/x.lit; }
+  var s=fuelSorted(); if(s.length>=2){ var a=s[s.length-2],b=s[s.length-1],dd=b.odoKm-a.odoKm; if(dd>0&&b.litres>0)return dd/b.litres; } return null; }
+function renderFuel(){
+  applyUnitLabels();
+  var last=fuelLast(), avg=fuelAverage();
+  $('fLast').innerHTML=(last?fmt(kmTo(last),1):'—')+'<small>'+uLabel()+'/L</small>';
+  $('fAvg').innerHTML=(avg?fmt(kmTo(avg),1):'—')+'<small>'+uLabel()+'/L</small>';
+  $('fL100').textContent=avg?fmt(100/kmTo(avg),1):'—';
+  var list=$('fuelList');
+  if(!fuel.length){ list.innerHTML='<div class="empty">No fill-ups yet.<br>Add one each time you refuel to track economy.</div>'; return; }
+  list.innerHTML='';
+  var byOdo=fuelSorted();
+  fuel.slice().sort(function(a,b){return b.ts-a.ts;}).forEach(function(f){
+    var idx=byOdo.indexOf(f), prev=idx>0?byOdo[idx-1]:null;
+    var eco=(prev&&f.odoKm>prev.odoKm&&f.litres>0)?(f.odoKm-prev.odoKm)/f.litres:null;
+    var el=document.createElement('div'); el.className='item';
+    el.innerHTML='<div class="main"><div class="t">'+fmt(kmTo(f.odoKm),0)+' '+uLabel()+' · '+fmt(f.litres,2)+' L'+(f.full?' <span class="pill">full</span>':'')+'</div>'+
+      '<div class="d">'+dateStr(f.ts)+(f.grade?(' · '+f.grade):'')+(f.price?(' · $'+fmt(f.price,2)):'')+'</div></div>'+
+      '<div class="r"><b>'+(eco?fmt(kmTo(eco),1):'—')+'</b><span>'+uLabel()+'/L</span></div>';
+    var del=document.createElement('button'); del.className='btn danger'; del.style.flex='0'; del.style.minWidth='46px'; del.style.padding='8px 10px'; del.textContent='✕';
+    del.onclick=function(){ fuel=fuel.filter(function(x){return x.id!==f.id;}); save(LS.fuel,fuel); renderFuel(); renderTrips(); toast('Fill-up deleted'); };
+    el.appendChild(del); list.appendChild(el);
+  });
+}
+$('fuelAdd').onclick=function(){
+  var odo=parseFloat($('fuelOdo').value), lit=parseFloat($('fuelLit').value), pr=parseFloat($('fuelPrice').value);
+  if(!(odo>0)){ $('fuelOdo').focus(); toast('Enter the odometer number'); return; }
+  if(!(lit>0)){ $('fuelLit').focus(); toast('Enter the litres'); return; }
+  var grade=$('fuelGrade').value, full=$('fuelFull').checked;
+  fuel.push({id:'f'+Date.now(),ts:Date.now(),odoKm:toKm(odo),litres:lit,price:isFinite(pr)?pr:null,unit:cfg.unit,grade:grade,full:full});
+  save(LS.fuel,fuel); cfg.lastGrade=grade; save(LS.cfg,cfg);
+  $('fuelOdo').value=''; $('fuelLit').value=''; $('fuelPrice').value=''; $('fuelFull').checked=true;
+  renderFuel(); renderTrips(); toast('Fill-up added ✓');
+};
+
+/* ================= ODO MODAL ================= */
+var modalCb=null;
+function openOdoModal(title,sub,unit,okText,cb){
+  $('mTitle').textContent=title; $('mSub').textContent=sub; $('mLabel').textContent='Odometer ('+unit+')';
+  $('mOk').textContent=okText; $('mOdo').value=''; modalCb=cb; $('scrim').classList.add('on'); setTimeout(function(){$('mOdo').focus();},50);
+}
+$('mOk').onclick=function(){ var v=parseFloat($('mOdo').value); $('scrim').classList.remove('on'); var cb=modalCb; modalCb=null; if(cb)cb(isFinite(v)?v:null); };
+$('mCancel').onclick=function(){ $('scrim').classList.remove('on'); var cb=modalCb; modalCb=null; if(cb)cb(null); };
+
+/* ================= INIT ================= */
+try{ $('fuelGrade').value=cfg.lastGrade; }catch(e){}
+applyUnitLabels(); renderTrips(); renderFuel(); refreshBackup(); show('scr-trips');
+window.addEventListener('beforeunload',function(e){ if(rec){e.preventDefault();e.returnValue='';} });
+})();
+</script>
+</body>
+</html>
