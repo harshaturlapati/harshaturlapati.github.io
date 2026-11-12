@@ -1,12 +1,32 @@
 <!doctype html>
-<!-- Ride Logger (v2: added fuel-grade select, "full tank" marker for accurate economy, and a keep-screen-awake toggle). v1 left unchanged in index.html. -->
+<!-- FBN 3086K ride logger — FBN_3086K_stats_v16.html
+   (v16: eliminated the "Zoom Level Not Supported" tiles for good. Those came only from Esri's Canvas World_Light_Gray_Base / World_Dark_Gray_Base (a real tile gap over central SG) — both REMOVED. Base maps are now all reliable: Streets (OSM, default), Dark (the SAME OSM tiles with a CSS invert/hue-rotate filter on the base tile-pane only, so the map is dark but the radar overlay stays true-colour), Satellite (Esri) was also removed because even Esri's World_Imagery throttles to the same placeholder on some IPs, so now there is NO Esri anywhere — base maps are 100% OSM. Toggle is Streets / Dark. The base filter is applied in ensureMap + setBasemap via bm.filter. Radar + legend unchanged. v15 and earlier untouched.)
+   Earlier — FBN_3086K_stats_v15.html
+   (v15: default base map changed to Streets (OpenStreetMap) — keyless, reliable and light; the real rain radar reads clearly on it. Esri Light/Dark could return "Zoom Level Not Supported" placeholder tiles on throttled IPs, so OSM is the dependable default. Light / Dark / Sat still in the toggle. A one-time cfg.streetsDefault flag flips an existing saved base to 'streets' on first v15 load. Radar + legend unchanged from v13/v14. v14 and earlier untouched.)
+   Earlier — FBN_3086K_stats_v14.html
+   (v14: made the map "clean like myENV". Default base map is now a CLEAN LIGHT base (Esri World_Light_Gray_Base) instead of dark — one-time cfg.lightMigrated flips existing saved 'dark' to 'light' so it takes effect; Light/Dark/Sat/Streets all still toggleable. Rain legends relabelled to match the real radar: "clear = nothing · light · moderate · heavy · intense" (no more "no rain = green", since v13's radar draws nothing over clear sky). This finishes the myENV look: v13 already stopped the full-map green wash (radar is transparent where dry); v14 puts it on a clean light base. v13 and earlier untouched.)
+   Earlier — FBN_3086K_stats_v13.html
+   (v13: the weather map now shows REAL RAIN RADAR (RainViewer — free, no API key, CORS-open, colour scheme 4 ≈ green→yellow→red like myENV) instead of the coarse NEA 2-hour-forecast field. Current observed frame by default, with a ▶ play button on the ride Weather page and the Live-map screen to animate the last ~2 h (13 frames @ 10-min steps + any nowcast). NEA's 2-hour forecast is kept ONLY for the directional "rain ~X km ahead" warning + rain-hold. The radar tile layer sits in the now-un-blurred 'clouds' pane, under the route/position markers; loadClouds() keeps its name so every caller (ride refresh, live map, trip map) switches over; frames cached 90 s. v12 and earlier untouched.)
+   Earlier — FBN_3086K_stats_v12.html
+   (v12: re-organised the ride pager into the user's page plan — ONE live DASHBOARD page (big speed + lean/accel/corner/vibe + distance/time + maxes + route-so-far), a WEATHER-MAP page (NEA rain field + your position over map tiles + follow toggle), and a MORE page (calibrate / engine-sample / set-forward / zero-lean + weather-map basemap). During a ride the pager AUTO-ROTATES Dashboard 30 s ⇄ Weather 5 s (cfg.dwell.dash / cfg.dwell.wx); a rain warning swings to the Weather map and HOLDS it there until you dismiss it or it clears. Post-ride analytics stays on the trip-detail page you open after stopping. The ⏸/▶ button pauses/resumes the rotation. All v11 machinery kept: ride-lock, forced pre-ride checklist, on-screen keypad, GPS validity gating (schema 9), stop-confirm.)
+   v11 was: big ride-UX + data-integrity update over v10.
+   • Ride screen is now a full-screen SWIPE PAGER (Map · Speed · Lean · Stats) — no scrolling.
+   • RIDE-LOCK: above ~8 km/h the action buttons lock (stats keep updating, only swiping works); unlocks a few seconds after you stop.
+   • FORCED PRE-RIDE CHECKLIST gates Start: good GPS fix + mount calibration (upright) + acknowledge. (Addresses the first-ride mis-calibration.)
+   • GPS VALIDITY GATING: every point stores accuracy; poor-accuracy / impossible-jump points (e.g. the CTE tunnel where GPS dies underground) are flagged invalid, excluded from distance/speed/max, and drawn as dashed gaps. Track schema 8→9 appends [acc_m, valid]; fully back-compatible (old 10-col trips still read).
+   • KEYBOARD ARREST FIX: native number inputs replaced by an on-screen keypad, so iOS has nothing to 'Undo Typing' when the bike vibrates.
+   • LIVE MAP on the ride screen with follow-GPS / recenter toggle; map tiles show on every route when online, route-on-grid offline.
+   • STOP asks 'Confirm stop ride?' with a Cancel.  • Optional AUTO-ADVANCE cycles pages with per-screen hold times.
+   No v10/earlier files touched; recording maths + analytics unchanged except the GPS gating above. v10 and earlier untouched.) -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Ride Logger</title>
+<title>FBN 3086K</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
-  /* Offline ride logger — single file, no libraries, no network. Dark cockpit theme. */
+  /* Phone-only ride logger. Core recording + backup work fully OFFLINE.
+     Map tiles + NEA weather are extras that switch on when you have internet. */
   :root{
     --bg:#0a0c0f; --panel:#13171c; --panel2:#0f1318; --line:#232a33;
     --fg:#f2f5f8; --dim:#8a93a0; --dim2:#5c6572;
@@ -18,39 +38,54 @@
   html,body{height:100%}
   body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
     -webkit-font-smoothing:antialiased;
-    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);}
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);}
   button{font-family:inherit}
+  a{color:var(--blue)}
+  .hide{display:none!important}
+  [hidden]{display:none!important}   /* v11: author section{display:flex} was overriding the UA [hidden] rule */
+
   header{display:flex;align-items:center;justify-content:space-between;gap:10px;
     padding:14px 16px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
-  header .brand{font-weight:800;letter-spacing:1.5px;font-size:15px}
-  header .brand small{display:block;color:var(--dim2);font-weight:600;letter-spacing:2px;font-size:9px;margin-top:2px}
-  .nav{display:flex;gap:6px}
-  .nav button{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--dim);
-    border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;letter-spacing:.5px}
-  .nav button.on{color:var(--fg);border-color:var(--accent2);background:#0e1a12}
-  main{padding:14px 16px 28px;max-width:720px;margin:0 auto}
-  section{display:flex;flex-direction:column;gap:14px}
-  h2{margin:4px 0 0;font-size:18px;letter-spacing:.3px}
-  .sub{color:var(--dim);font-size:13px;line-height:1.5;margin:0}
+  header .brand{font-weight:800;letter-spacing:1px;font-size:17px}
+  header .brand small{display:block;color:var(--dim2);font-weight:700;letter-spacing:2px;font-size:9px;margin-top:3px}
+  .hstat{display:flex;align-items:center;gap:7px;color:var(--dim);font-size:11px;font-family:var(--mono)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--crit);vertical-align:-1px}
+  .dot.ok{background:var(--accent)} .dot.warn{background:var(--warn)}
 
+  main{padding:16px 16px 92px;max-width:720px;margin:0 auto}
+  section{display:flex;flex-direction:column;gap:14px}
+  h2{margin:2px 0 0;font-size:20px;letter-spacing:.2px}
+  .sub{color:var(--dim);font-size:13px;line-height:1.55;margin:0}
+  .caption{color:var(--dim2);font-size:11px;letter-spacing:.6px;text-transform:uppercase}
+
+  /* big friendly buttons */
   .bigbtn{appearance:none;border:0;border-radius:16px;background:var(--accent);color:#04120a;
-    font-size:19px;font-weight:800;letter-spacing:.3px;padding:20px;display:flex;align-items:center;
-    justify-content:center;gap:10px;width:100%}
-  .bigbtn.stop{background:var(--crit);color:#160303}
+    font-size:20px;font-weight:800;letter-spacing:.2px;padding:22px 18px;display:flex;align-items:center;
+    justify-content:center;gap:10px;width:100%;min-height:64px}
+  .bigbtn.stop{background:var(--crit);color:#170303}
+  .bigbtn.save{background:var(--accent)}
+  .bigbtn.load{background:var(--blue);color:#04121f}
+  .bigbtn.ghostbig{background:var(--panel);color:var(--fg);border:1px solid var(--line);font-size:17px;min-height:56px}
   .bigbtn:active{transform:translateY(1px)}
+  .hint{color:var(--dim);font-size:12px;text-align:center;margin:-4px 0 2px;line-height:1.5}
+
   .row{display:flex;gap:10px;flex-wrap:wrap}
   .row>*{flex:1;min-width:0}
   .btn{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--fg);
-    border-radius:12px;padding:13px 14px;font-size:14px;font-weight:700;letter-spacing:.3px;text-align:center}
+    border-radius:12px;padding:14px;font-size:14px;font-weight:700;letter-spacing:.2px;text-align:center;min-height:48px}
   .btn.ghost{background:transparent;color:var(--dim)}
   .btn.danger{color:var(--crit);border-color:#43242a;background:#190e10}
   .btn.go{background:var(--accent);color:#04120a;border-color:transparent}
+  .btn.blue{background:var(--blue);color:#04121f;border-color:transparent}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .card h3{margin:0;font-size:16px;display:flex;align-items:center;gap:8px}
 
   .stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
   .stats.two{grid-template-columns:1fr 1fr}
-  .cell{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:11px 12px;
+  .cell{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;
     display:flex;flex-direction:column;gap:5px;justify-content:center}
-  .cell .k{color:var(--dim);font-size:10px;letter-spacing:1.3px;text-transform:uppercase}
+  .cell .k{color:var(--dim);font-size:10px;letter-spacing:1.2px;text-transform:uppercase}
   .cell .v{font-size:clamp(19px,6vw,26px);font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
   .cell .v small{font-size:.5em;color:var(--dim);font-weight:700;margin-left:3px}
   .cell.hi .v{color:var(--warn)}
@@ -61,7 +96,7 @@
   .speedwrap .unit{color:var(--dim);letter-spacing:3px;font-size:13px;margin-top:8px}
 
   .list{display:flex;flex-direction:column;gap:8px}
-  .item{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 14px;
+  .item{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 14px;
     display:flex;align-items:center;gap:12px;text-align:left;width:100%;color:inherit}
   .item .main{flex:1;min-width:0}
   .item .t{font-weight:700;font-size:15px}
@@ -69,18 +104,31 @@
   .item .r{text-align:right;font-variant-numeric:tabular-nums}
   .item .r b{font-size:17px;font-weight:800}
   .item .r span{display:block;color:var(--dim);font-size:11px;margin-top:2px}
-  .empty{color:var(--dim2);text-align:center;padding:26px 10px;font-size:13px;line-height:1.6;
+  .empty{color:var(--dim2);text-align:center;padding:26px 12px;font-size:13px;line-height:1.7;
     border:1px dashed var(--line);border-radius:14px}
 
   .foot{display:flex;justify-content:space-between;align-items:center;color:var(--dim);
     font-size:11px;font-family:var(--mono);padding:2px}
-  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--crit);margin-right:7px;vertical-align:-1px}
-  .dot.ok{background:var(--accent)} .dot.warn{background:var(--warn)}
 
   svg.plot{width:100%;height:auto;display:block;background:var(--panel2);border:1px solid var(--line);border-radius:14px}
-  .caption{color:var(--dim2);font-size:11px;letter-spacing:.5px;text-transform:uppercase}
 
-  label.fld{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--dim);letter-spacing:.4px}
+  /* map */
+  .mapwrap{position:relative;border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  .lmap{height:300px;width:100%;background:#0a0c0f}
+  .lmap.tall{height:340px}
+  .wxinfo{position:absolute;left:10px;top:10px;z-index:500;display:none;align-items:center;gap:7px;
+    background:rgba(10,12,15,.82);border:1px solid var(--line);border-radius:999px;
+    padding:6px 12px;font-size:12px;font-weight:700;color:var(--fg);backdrop-filter:blur(4px)}
+  .leaflet-container{background:#0a0c0f;font-family:var(--sans)}
+  .leaflet-control-attribution{font-size:9px!important;background:rgba(10,12,15,.6)!important;color:#6d7682!important}
+  .leaflet-control-attribution a{color:#8a93a0!important}
+  .wxicon{display:flex;align-items:center;justify-content:center}
+  .wxicon span{font-size:21px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.75))}
+  .wxlegend{display:flex;flex-wrap:wrap;gap:6px 11px;font-size:11px;color:var(--dim);align-items:center;margin-top:-4px}
+  .wxlegend span{display:inline-flex;align-items:center;gap:4px}
+  .wxlegend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+
+  label.fld{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--dim);letter-spacing:.3px}
   input[type=number],input[type=text]{appearance:none;background:var(--panel2);border:1px solid var(--line);
     color:var(--fg);border-radius:12px;padding:14px;font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;
     width:100%;font-family:var(--mono)}
@@ -88,124 +136,369 @@
     color:var(--fg);border-radius:12px;padding:14px;font-size:16px;font-weight:700;width:100%;font-family:var(--sans)}
   label.chk{display:flex;flex-direction:row;align-items:center;gap:12px;background:var(--panel2);
     border:1px solid var(--line);border-radius:12px;padding:14px;font-size:14px;font-weight:700;color:var(--fg)}
-  label.chk input{width:24px;height:24px;accent-color:var(--accent);margin:0;flex:0 0 auto}
+  label.chk input{width:26px;height:26px;accent-color:var(--accent);margin:0;flex:0 0 auto}
   .seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
-  .seg button{appearance:none;border:0;background:var(--panel);color:var(--dim);padding:8px 14px;font-size:12px;font-weight:700}
+  .seg button{appearance:none;border:0;background:var(--panel);color:var(--dim);padding:10px 16px;font-size:13px;font-weight:700}
   .seg button.on{background:#0e1a12;color:var(--fg)}
+  .seg.baseseg{display:flex;width:100%}
+  .seg.baseseg button{flex:1;padding:10px 6px}
+  .setrow{display:flex;align-items:center;justify-content:space-between;gap:10px}
+
+  .note{background:#12100a;border:1px solid #3a3115;color:#e7cf94;border-radius:14px;padding:14px;font-size:13px;line-height:1.6}
+  .note b{color:#f3dc9f}
+  .okbox{background:#0c1711;border:1px solid #1f8f52;color:#b8f0cf;border-radius:14px;padding:13px 15px;font-size:13px;line-height:1.5;font-weight:700}
+  .pill{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:999px;
+    padding:4px 10px;font-size:11px;color:var(--dim);letter-spacing:.3px}
+
+  /* v8: IMU readout + mount calibration + pump scanner */
+  .imustat{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--dim);font-family:var(--mono);
+    background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:6px 12px;align-self:flex-start;line-height:1.3}
+  .imustat .dot{background:var(--dim2);flex:0 0 auto} .imustat.ok .dot{background:var(--accent)} .imustat.learn .dot{background:var(--warn)}
+  .cell .v.neg{color:var(--crit)} .cell .v.pos{color:var(--accent)}
+  .calsteps{display:flex;flex-direction:column;gap:12px}
+  .calstep{display:flex;gap:11px;align-items:flex-start;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .calstep .n{flex:0 0 auto;width:24px;height:24px;border-radius:50%;background:var(--panel);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:var(--dim)}
+  .calstep.done .n{background:var(--accent2);color:#fff;border-color:transparent}
+  .calstep .body{flex:1;min-width:0}.calstep .body b{font-size:14px}
+  .calstep .body p{margin:3px 0 0;font-size:12px;color:var(--dim);line-height:1.5}
+  .calstep .body .live{font-family:var(--mono);font-size:11px;color:var(--blue);margin-top:6px;min-height:1.2em}
+  .scanbox{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:10px}
+  .scanbox img.shot{width:100%;max-height:230px;object-fit:contain;border-radius:10px;background:#000;border:1px solid var(--line)}
+  .scanprog{font-family:var(--mono);font-size:12px;color:var(--blue);min-height:1.2em;line-height:1.45}
+  .scanres{display:flex;flex-direction:column;gap:7px}
+  .scanres .rr{display:flex;justify-content:space-between;gap:10px;font-family:var(--mono);font-size:15px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 13px}
+  .scanres .rr b{font-weight:800}
+  .fuelthumb{width:42px;height:42px;object-fit:cover;border-radius:8px;border:1px solid var(--line);flex:0 0 auto}
+  .geo{color:var(--blue);font-size:11px}
+
+  /* v9: ride insights */
+  .gearbars{display:flex;flex-direction:column;gap:5px}
+  .gb{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);font-family:var(--mono)}
+  .gb>span:first-child{width:14px;color:var(--fg);font-weight:800;text-align:center;flex:0 0 auto}
+  .gb>span:last-child{width:36px;text-align:right;flex:0 0 auto}
+  .gbbar{flex:1;height:10px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .gbbar i{display:block;height:100%;background:var(--accent)}
+  #insTips .item{align-items:flex-start}
+  #insTips .d{font-size:13px;line-height:1.5;color:var(--fg)}
+  #insEngine .pill{display:inline-block;margin:0 6px 6px 0}
+
+  /* v10: optional-setup disclosure on the ride screen */
+  .setup{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:10px 12px}
+  .setup>summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--dim);list-style:none;display:flex;align-items:center;gap:6px}
+  .setup>summary::-webkit-details-marker{display:none}
+  .setup>summary::after{content:"▾";margin-left:auto;color:var(--dim2)}
+  .setup[open]>summary{color:var(--fg);margin-bottom:6px}
+  .setup[open]>summary::after{content:"▴"}
 
   /* modal */
-  .scrim{position:fixed;inset:0;background:rgba(3,5,8,.78);display:none;align-items:center;justify-content:center;
-    padding:22px;z-index:50}
+  .scrim{position:fixed;inset:0;background:rgba(3,5,8,.8);display:none;align-items:center;justify-content:center;
+    padding:22px;z-index:60}
   .scrim.on{display:flex}
   .modal{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:20px;width:100%;max-width:420px;
-    display:flex;flex-direction:column;gap:16px}
+    display:flex;flex-direction:column;gap:16px;max-height:calc(100dvh - 32px);overflow-y:auto}
   .modal h3{margin:0;font-size:19px}
   .modal p{margin:0;color:var(--dim);font-size:13px;line-height:1.5}
-
-  .pill{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:999px;
-    padding:4px 10px;font-size:11px;color:var(--dim);letter-spacing:.5px}
-  .note{background:#12100a;border:1px solid #3a3115;color:#e7cf94;border-radius:12px;padding:11px 13px;font-size:12px;line-height:1.5}
   textarea{width:100%;min-height:120px;background:var(--panel2);border:1px solid var(--line);color:var(--fg);
     border-radius:12px;padding:12px;font-family:var(--mono);font-size:12px}
-  .hide{display:none!important}
-  a{color:var(--blue)}
+
+  /* bottom nav */
+  .bottomnav{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;
+    background:var(--panel);border-top:1px solid var(--line);
+    padding-top:6px;padding-bottom:calc(6px + env(safe-area-inset-bottom));
+    padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+  .bottomnav button{flex:1;appearance:none;border:0;background:transparent;color:var(--dim);
+    display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;font-size:11px;font-weight:700;letter-spacing:.2px}
+  .bottomnav button .ic{font-size:23px;line-height:1}
+  .bottomnav button.on{color:var(--accent)}
+
+  /* rain warning */
+  .rainwarn{position:sticky;top:0;z-index:30;background:#2a1206;border-bottom:2px solid var(--warn);
+    color:#ffdca6;padding:12px 16px;font-size:14px;line-height:1.45;font-weight:700;
+    display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .rainwarn span{flex:1;min-width:140px;font-weight:600;color:#ffcf96}
+  .rainwarn.on{animation:rainpulse 1.1s ease-in-out infinite}
+  .rainwarn button{background:var(--warn);color:#1a1205;border:0;border-radius:9px;padding:8px 13px;font-weight:800;font-size:12px}
+  @keyframes rainpulse{0%,100%{background:#2a1206}50%{background:#3f1d09}}
+
+  /* toast */
+  #toast{position:fixed;left:50%;bottom:92px;transform:translateX(-50%) translateY(16px);z-index:70;
+    background:#0c1711;border:1px solid #1f8f52;color:#eafff2;font-weight:800;font-size:14px;
+    padding:12px 18px;border-radius:999px;opacity:0;pointer-events:none;transition:.22s;max-width:92vw;text-align:center}
+  #toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  /* ================= v11: full-screen ride pager ================= */
+  .btn:disabled,.bigbtn:disabled{opacity:.35;pointer-events:none}
+  body.riding{overflow:hidden}
+  body.riding>header,body.riding>.bottomnav{display:none!important}
+  body.riding>.rainwarn{position:fixed;top:0;left:0;right:0;z-index:55}
+  #scr-record{gap:0}
+  body.riding #scr-record{position:fixed;inset:0;z-index:40;background:var(--bg);display:flex;flex-direction:column;
+    padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);min-height:0}
+  /* when NOT riding, scr-record is hidden anyway; styles only bite under body.riding */
+  .rp-top{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 16px 6px;
+    font-family:var(--mono);font-size:12px;color:var(--dim);flex:0 0 auto}
+  .rp-top .rp-time{font-size:18px;font-weight:800;color:var(--fg);font-variant-numeric:tabular-nums}
+  .rp-lock{background:#2a1206;border:1px solid var(--warn);color:#ffcf96;border-radius:999px;padding:4px 11px;
+    font-weight:800;font-size:11px;letter-spacing:.4px;display:inline-flex;align-items:center;gap:6px}
+  .rp-gps{display:flex;align-items:center;gap:6px;white-space:nowrap}
+  .rp-coach{margin:0 16px 4px;flex:0 0 auto}
+  .rp-pages{flex:1 1 0;display:flex;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;
+    -webkit-overflow-scrolling:touch;min-height:0;scrollbar-width:none}
+  .rp-pages::-webkit-scrollbar{display:none}
+  .rp-page{flex:0 0 100%;width:100%;scroll-snap-align:center;display:flex;flex-direction:column;gap:12px;
+    padding:6px 16px 10px;overflow-y:auto;min-height:0}
+  body.riding.locked .rp-page{overflow-y:hidden}
+  .rp-pagehd{font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--dim2);font-weight:800;flex:0 0 auto}
+  .rp-maparea{position:relative;flex:1 1 0;border:1px solid var(--line);border-radius:16px;overflow:hidden;min-height:220px}
+  #rideMap{position:absolute;inset:0;height:100%;width:100%;background:#0a0c0f}  /* override .lmap{height:300px} so it fills the maparea */
+  .rp-follow{position:absolute;right:10px;top:10px;z-index:500;background:rgba(10,12,15,.82);border:1px solid var(--line);
+    color:var(--fg);border-radius:999px;padding:8px 13px;font-size:12px;font-weight:800;backdrop-filter:blur(4px)}
+  .rp-follow.off{color:var(--dim)}
+  .rp-gpswarn{position:absolute;left:10px;top:10px;z-index:500;display:none;align-items:center;gap:6px;
+    background:rgba(42,18,6,.9);border:1px solid var(--warn);color:#ffcf96;border-radius:999px;padding:6px 12px;font-size:11px;font-weight:800}
+  .rp-gpswarn.on{display:inline-flex}
+  .rp-radar{position:absolute;left:10px;bottom:10px;z-index:500;display:flex;align-items:center;gap:7px;
+    background:rgba(10,12,15,.82);border:1px solid var(--line);border-radius:999px;padding:4px 12px 4px 4px;backdrop-filter:blur(4px)}
+  .rp-radarbtn{appearance:none;border:0;background:var(--accent);color:#04120a;width:28px;height:28px;border-radius:50%;
+    font-size:12px;font-weight:800;line-height:1;display:flex;align-items:center;justify-content:center;padding:0}
+  .rp-radar span{font-size:11px;font-family:var(--mono);color:var(--fg);font-weight:700;white-space:nowrap}
+  .speedwrap.big{flex:1 1 0;justify-content:center}
+  .speedwrap.big .val{font-size:clamp(84px,32vw,180px)}
+  .rp-subrow{display:flex;gap:10px}
+  .rp-subrow>div{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;
+    display:flex;flex-direction:column;align-items:center;gap:3px}
+  .rp-subrow b{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums}
+  .rp-subrow span{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--dim)}
+  .leanbig{flex:1 1 0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;gap:6px}
+  .leanbig .lv{font-size:clamp(70px,26vw,150px);font-weight:800;line-height:.9;font-variant-numeric:tabular-nums}
+  .leanbig.hi .lv{color:var(--warn)}
+  .leanbig .lu{color:var(--dim);letter-spacing:3px;font-size:13px}
+  .rp-dots{display:flex;gap:7px;justify-content:center;align-items:center;padding:7px 0 5px;flex:0 0 auto}
+  .rp-dots button{width:9px;height:9px;border-radius:50%;border:0;background:var(--line);padding:0}
+  .rp-dots button.on{background:var(--accent);width:22px;border-radius:5px}
+  .rp-ctrls{display:flex;gap:10px;align-items:stretch;padding:4px 16px calc(6px + env(safe-area-inset-bottom));flex:0 0 auto}
+  .rp-ctrls .stopBtn{flex:1}
+  .rp-autobtn{flex:0 0 auto;min-width:92px}
+  .rp-autobtn.on{background:var(--blue);color:#04121f;border-color:transparent}
+  .rp-restonly{border:1px dashed var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:9px}
+  .rp-restonly .rc{font-size:11px;color:var(--dim2);letter-spacing:.3px}
+  body.riding.locked .rp-restonly{opacity:.4;pointer-events:none}
+
+  /* numeric keypad (replaces native inputs → no iOS "Undo Typing" popup) */
+  .kpdisp{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:16px;font-size:34px;
+    font-weight:800;font-variant-numeric:tabular-nums;font-family:var(--mono);text-align:right;min-height:62px;color:var(--fg)}
+  .kpdisp .ph{color:var(--dim2);font-weight:700;font-size:20px}
+  .kpgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+  .kpgrid button{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:12px;
+    padding:16px 0;font-size:24px;font-weight:800;font-variant-numeric:tabular-nums}
+  .kpgrid button:active{background:#0e1a12}
+  .kpgrid button.kpdel{color:var(--crit)}
+  .fakeinput{background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:12px;padding:14px;
+    font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;width:100%;font-family:var(--mono);text-align:left;min-height:52px}
+  .fakeinput.empty{color:var(--dim2)}
+
+  /* forced pre-ride checklist */
+  .gatestep{display:flex;gap:11px;align-items:flex-start;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .gatestep .gn{flex:0 0 auto;width:26px;height:26px;border-radius:50%;background:var(--panel);border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:var(--dim)}
+  .gatestep.done .gn{background:var(--accent2);color:#fff;border-color:transparent}
+  .gatestep.warn .gn{background:var(--warn);color:#201403;border-color:transparent}
+  .gatestep .gbody{flex:1;min-width:0}
+  .gatestep .gbody b{font-size:14px}
+  .gatestep .gbody p{margin:3px 0 0;font-size:12px;color:var(--dim);line-height:1.45}
+  .gatestep .gbody .glive{font-family:var(--mono);font-size:11px;color:var(--blue);margin-top:5px;min-height:1.1em}
+  .gatestep .gbody .btn{margin-top:8px}
 </style>
 </head>
 <body>
 <header>
-  <div class="brand">RIDE LOG<small id="recBadge">OFFLINE · PHONE ONLY</small></div>
-  <div class="nav">
-    <button id="navTrips" class="on" data-scr="scr-trips">Rides</button>
-    <button id="navFuel" data-scr="scr-fuel">Fuel</button>
-  </div>
+  <div class="brand">FBN 3086K<small id="recBadge">RIDE LOGGER · PHONE</small></div>
+  <div class="hstat"><span class="dot" id="netDot"></span><span id="netTxt">offline</span></div>
 </header>
 
+<div id="rainWarn" class="rainwarn hide"></div>
+
 <main>
-  <!-- ===================== RIDES LIST ===================== -->
+  <!-- ===================== RIDES ===================== -->
   <section id="scr-trips">
-    <button class="bigbtn" id="startBtn">● &nbsp;Start ride</button>
+    <button class="bigbtn" id="startBtn">🏍️ &nbsp;Start ride</button>
+    <div class="hint" id="savedHint">0 rides saved on this phone</div>
+
+    <div id="tipBanner" class="note hide">
+      💡 <b>Keep your rides safe.</b> Add this page to your Home Screen, then tap <b>Backup</b> now and then to save a file.
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="tipGoBackup" style="flex:1">Open Backup</button>
+        <button class="btn ghost" id="tipDismiss" style="flex:0;min-width:84px">Later</button>
+      </div>
+    </div>
+
     <div class="stats three">
       <div class="cell"><div class="k">Rides</div><div class="v" id="sumRides">0</div></div>
       <div class="cell"><div class="k">Distance</div><div class="v" id="sumDist">0<small id="sumDistU">km</small></div></div>
       <div class="cell"><div class="k">Economy</div><div class="v" id="sumEco">—<small>km/L</small></div></div>
     </div>
+
+    <button class="bigbtn ghostbig" id="liveMapBtn">🗺️ &nbsp;Live map &amp; weather</button>
+    <div class="hint">See where you are and the clouds/rain around you now (needs internet)</div>
+
     <div>
-      <div class="caption" style="margin-bottom:8px">Saved rides</div>
+      <div class="caption" style="margin-bottom:8px">Your saved rides</div>
       <div class="list" id="tripList"></div>
     </div>
-    <div class="row">
-      <button class="btn ghost" id="backupBtn">Back up data</button>
-      <button class="btn ghost" id="restoreBtn">Restore</button>
-    </div>
-    <details>
-      <summary class="caption" style="cursor:pointer">Settings</summary>
-      <div style="display:flex;flex-direction:column;gap:12px;margin-top:12px">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-          <span class="sub">Distance unit</span>
-          <div class="seg" id="unitSeg"><button data-u="km" class="on">km</button><button data-u="mi">mi</button></div>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-          <span class="sub">Phone mount</span>
-          <div class="seg" id="mountSeg"><button data-m="portrait" class="on">Portrait</button><button data-m="landscape">Landscape</button></div>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-          <span class="sub">Keep screen on while recording</span>
-          <div class="seg" id="awakeSeg"><button data-a="on" class="on">On</button><button data-a="off">Off</button></div>
-        </div>
-        <p class="sub">Fuel volume is always in litres. Lean is read from the phone's tilt — mount it firmly to the bike and tap <b>Set upright</b> when stopped to zero it.</p>
-      </div>
-    </details>
   </section>
 
-  <!-- ===================== RECORDING ===================== -->
+  <!-- ===================== RECORDING (v11: full-screen swipe pager) ===================== -->
   <section id="scr-record" hidden>
-    <div class="speedwrap"><div class="val" id="rSpeed">0</div><div class="unit" id="rSpeedU">KM/H</div></div>
-    <div class="stats three">
-      <div class="cell" id="rLeanCell"><div class="k">Lean</div><div class="v" id="rLean">0°</div></div>
-      <div class="cell"><div class="k">G-force</div><div class="v" id="rG">1.0<small>g</small></div></div>
-      <div class="cell"><div class="k">Distance</div><div class="v" id="rDist">0.0<small id="rDistU">km</small></div></div>
-      <div class="cell"><div class="k">Time</div><div class="v" id="rTime">0:00</div></div>
-      <div class="cell"><div class="k">Max spd</div><div class="v" id="rMaxS">0</div></div>
-      <div class="cell"><div class="k">Max lean</div><div class="v" id="rMaxL">0°</div></div>
+    <div class="rp-top">
+      <span id="rRec" style="color:var(--crit);font-weight:800;letter-spacing:1px">● REC</span>
+      <span class="rp-lock hide" id="rLock">🔒 LOCKED · swipe only</span>
+      <span class="rp-gps"><span class="dot" id="gpsDot"></span><span id="gpsTxt">waiting for GPS…</span>&nbsp;·&nbsp;<span id="ptCount" style="color:var(--dim2)">0 pts</span></span>
     </div>
-    <div class="foot">
-      <span><span class="dot" id="gpsDot"></span><span id="gpsTxt">waiting for GPS…</span></span>
-      <span id="ptCount">0 pts</span>
+    <div class="note hide rp-coach" id="rideCoach">
+      🟢 <b>Just ride.</b> The <b>Dashboard</b> shows live data and flips to the <b>Weather map</b> for ~5&nbsp;s every ~30&nbsp;s (it locks on if rain's coming). Swipe any time; <b>More</b> has calibration. Above ~8&nbsp;km/h the buttons lock so a bump can't stop you. Tap <b>■ Stop</b> when done; it confirms.
+      <div class="row" style="margin-top:10px"><button class="btn" id="coachOk" style="flex:1">Got it 👍</button></div>
     </div>
-    <div class="row">
-      <button class="btn" id="calBtn">Set upright</button>
+
+    <div class="rp-pages" id="rpPages">
+      <!-- DASHBOARD (the live-data screen) -->
+      <div class="rp-page dash" data-pg="dash">
+        <div class="speedwrap"><div class="val" id="rSpeed">0</div><div class="unit" id="rSpeedU">KM/H</div></div>
+        <div class="imustat" id="imuStat"><span class="dot"></span><span id="imuStatTxt">IMU: auto-sets “forward” on your first firm pull — just ride</span></div>
+        <div class="stats three">
+          <div class="cell" id="rLeanCell"><div class="k">Lean</div><div class="v" id="rLean">0°</div></div>
+          <div class="cell"><div class="k">Accel / Brake</div><div class="v" id="rGlong">0.00<small>g</small></div></div>
+          <div class="cell"><div class="k">Cornering</div><div class="v" id="rGlat">0.00<small>g</small></div></div>
+          <div class="cell"><div class="k">Engine vibe</div><div class="v" id="rVibe">0</div></div>
+          <div class="cell"><div class="k">Distance <span id="rDistU" style="text-transform:none;color:var(--dim2)">km</span></div><div class="v" id="rDist">0.0</div></div>
+          <div class="cell"><div class="k">Time</div><div class="v" id="rTime">0:00</div></div>
+        </div>
+        <div class="foot"><span>max spd <b id="rMaxS">0</b></span><span>max lean <b id="rMaxL">0°</b></span><span>max g <b id="rMaxG">1.0</b></span></div>
+        <div class="caption">Route so far (works offline)</div>
+        <svg class="plot" id="liveTrace" viewBox="0 0 340 150" preserveAspectRatio="xMidYMid meet"></svg>
+      </div>
+      <!-- WEATHER MAP -->
+      <div class="rp-page" data-pg="wx">
+        <div class="rp-pagehd" style="display:flex;justify-content:space-between;align-items:baseline"><span>Weather · rain around you</span><span id="rideWxInfo" style="letter-spacing:0;text-transform:none;font-weight:700;color:var(--dim)"></span></div>
+        <div class="rp-maparea">
+          <div class="lmap" id="rideMap"></div>
+          <button class="rp-follow" id="rideFollowBtn">◎ Follow: on</button>
+          <div class="rp-gpswarn" id="rideGpsWarn">⚠ GPS weak — not logging</div>
+          <div class="rp-radar"><button class="rp-radarbtn" id="rideRadarPlay">▶</button><span id="rideRadarTime">radar</span></div>
+        </div>
+        <div class="wxlegend"><span style="color:var(--dim2)">clear = nothing</span><span><i style="background:#2ecc71"></i>light</span><span><i style="background:#f1c40f"></i>moderate</span><span><i style="background:#e67e22"></i>heavy</span><span><i style="background:#e74c3c"></i>intense</span><span style="margin-left:auto;color:var(--dim2)">now, not when you rode</span></div>
+      </div>
+      <!-- MORE / SETUP (everything else) -->
+      <div class="rp-page" data-pg="more">
+        <div class="rp-pagehd">More · setup &amp; options</div>
+        <div class="rp-restonly">
+          <div class="rc">Only while stopped — calibrate or sample the engine:</div>
+          <div class="row">
+            <button class="btn" id="imuCalBtn">🧭 Calibrate mount</button>
+            <button class="btn" id="calBtn">Zero lean</button>
+          </div>
+          <div class="row">
+            <button class="btn" id="engSampleBtn">🎙️ Engine sample (5s)</button>
+            <button class="btn" id="fwdNowBtn">Set forward now</button>
+          </div>
+          <div class="hint" id="engHint" style="text-align:left;margin:0">Forward auto-locks on your first firm pull. Engine sample: steady throttle, tap, wait 5 s.</div>
+        </div>
+        <div class="caption" style="margin-top:4px">Weather-map base</div>
+        <div class="seg baseseg" id="rideBaseSeg"><button data-b="streets" class="on">Streets</button><button data-b="dark">Dark</button></div>
+        <div class="hint" id="rideWxNote" style="text-align:left">The Weather page auto-shows for 5 s every 30 s (and locks on during a rain warning). Needs internet; your route &amp; stats still record offline.</div>
+      </div>
     </div>
-    <button class="bigbtn stop" id="stopBtn">■ &nbsp;Stop &amp; save ride</button>
+
+    <div class="rp-dots" id="rpDots"></div>
+    <div class="rp-ctrls">
+      <button class="btn rp-autobtn" id="rpAutoBtn">▶ Auto</button>
+      <button class="bigbtn stop stopBtn" id="stopBtn">■ &nbsp;Stop &amp; save</button>
+    </div>
   </section>
 
   <!-- ===================== TRIP DETAIL ===================== -->
   <section id="scr-trip" hidden>
-    <button class="btn ghost" id="tripBack" style="align-self:flex-start;flex:0">‹ Back to rides</button>
+    <button class="btn ghost" id="tripBack" style="align-self:flex-start;flex:0;min-width:150px">‹ Back to rides</button>
     <h2 id="tripTitle">Ride</h2>
     <p class="sub" id="tripWhen"></p>
+
+    <div class="mapwrap" id="tripMapWrap">
+      <div class="lmap" id="tripMap"></div>
+      <div class="wxinfo" id="tripWx"></div>
+    </div>
     <svg class="plot" id="route" viewBox="0 0 340 200" preserveAspectRatio="xMidYMid meet"></svg>
+    <div class="row">
+      <button class="btn blue" id="tripWxBtn">🌧 Radar: off</button>
+    </div>
+    <div class="seg baseseg" id="tripBaseSeg"><button data-b="streets" class="on">Streets</button><button data-b="dark">Dark</button></div>
+    <div class="hint" id="tripWxHint">Live rain radar (RainViewer) — colour = rain intensity now. ▶ animates the last ~2 h. (Shows weather now, not when you rode.)</div>
+    <div class="wxlegend" id="tripWxLegend"><span style="color:var(--dim2)">clear = nothing</span><span><i style="background:#2ecc71"></i>light</span><span><i style="background:#f1c40f"></i>moderate</span><span><i style="background:#e67e22"></i>heavy</span><span><i style="background:#e74c3c"></i>intense</span></div>
+
     <div class="stats three" id="tripStats"></div>
     <div><div class="caption" style="margin-bottom:6px">Speed</div><svg class="plot" id="chartSpeed" viewBox="0 0 340 110"></svg></div>
     <div><div class="caption" style="margin-bottom:6px">Lean (L / R)</div><svg class="plot" id="chartLean" viewBox="0 0 340 110"></svg></div>
+    <div id="longWrap" class="hide"><div class="caption" style="margin-bottom:6px">Accel (+) / Brake (−) g</div><svg class="plot" id="chartLong" viewBox="0 0 340 110"></svg></div>
+    <div id="latWrap" class="hide"><div class="caption" style="margin-bottom:6px">Cornering g (L / R)</div><svg class="plot" id="chartLat" viewBox="0 0 340 110"></svg></div>
+    <div id="imuNote" class="pill hide" style="align-self:flex-start"></div>
+
+    <div class="card hide" id="insightsCard">
+      <h3>🔬 Ride insights</h3>
+      <div id="insStyle"></div>
+      <div class="stats three" id="insCells"></div>
+      <div class="list" id="insTips"></div>
+      <div id="insGear"></div>
+      <div class="caption" style="margin:4px 0 6px">Elevation profile</div>
+      <svg class="plot hide" id="chartElev" viewBox="0 0 340 110"></svg>
+      <div class="row"><button class="btn blue" id="elevBtn">⛰️ Get elevation &amp; grade (online)</button></div>
+      <div class="hint" id="elevHint" style="text-align:left">Grade needs internet (one free Open-Meteo lookup, cached after).</div>
+      <div id="insEngine"></div>
+    </div>
+
     <div class="row">
-      <button class="btn go" id="shareGpx">Share GPX</button>
-      <button class="btn" id="copyCsv">Copy CSV</button>
+      <button class="btn go" id="shareGpx">Share route (GPX)</button>
+      <button class="btn" id="copyCsv">Share data (CSV)</button>
     </div>
     <button class="btn danger" id="delTrip">Delete this ride</button>
   </section>
 
+  <!-- ===================== LIVE MAP ===================== -->
+  <section id="scr-map" hidden>
+    <button class="btn ghost" id="mapBack" style="align-self:flex-start;flex:0;min-width:150px">‹ Back to rides</button>
+    <h2>Live map &amp; weather</h2>
+    <div class="mapwrap">
+      <div class="lmap tall" id="liveMap"></div>
+      <div class="wxinfo" id="liveWx"></div>
+      <div class="rp-radar"><button class="rp-radarbtn" id="liveRadarPlay">▶</button><span id="liveRadarTime">radar</span></div>
+    </div>
+    <div class="hint">Green dot = you. Colour = live rain radar (RainViewer) — green = light, red = heavy. ▶ animates the last ~2 h.</div>
+    <div class="hint">Rain warnings follow your GPS direction of travel — a web page can't read your Google&nbsp;Maps route — and check NEA rain ahead.</div>
+    <div class="wxlegend" id="liveWxLegend"><span style="color:var(--dim2)">clear = nothing</span><span><i style="background:#2ecc71"></i>light</span><span><i style="background:#f1c40f"></i>moderate</span><span><i style="background:#e67e22"></i>heavy</span><span><i style="background:#e74c3c"></i>intense</span></div>
+    <div class="note hide" id="mapMsg">This needs internet. Connect to mobile data or Wi-Fi (not the bike's camera Wi-Fi) to load the map and weather.</div>
+    <div class="row">
+      <button class="btn blue" id="liveWxBtn">🌧 Radar: on</button>
+      <button class="btn" id="liveRefresh">Refresh weather</button>
+    </div>
+    <div class="seg baseseg" id="liveBaseSeg"><button data-b="streets" class="on">Streets</button><button data-b="dark">Dark</button></div>
+  </section>
+
   <!-- ===================== FUEL ===================== -->
   <section id="scr-fuel" hidden>
-    <h2>Fuel log</h2>
-    <p class="sub">Each time you fill up, enter the odometer reading and the litres you put in. For an exact figure, <b>fill the tank to full</b> and tick the box — economy is then measured tank-to-tank between full fills.</p>
+    <h2>Fuel</h2>
+    <p class="sub">Each fill-up: <b>snap the pump panel</b> (we tag the spot &amp; keep the photo) or just type the <b>litres</b>, and type the <b>odometer</b> from your dash. For an exact figure, <b>fill right to full</b> and keep the tick on — economy is then measured tank-to-tank.</p>
     <div class="stats three">
       <div class="cell"><div class="k">Last fill</div><div class="v" id="fLast">—<small>km/L</small></div></div>
       <div class="cell"><div class="k">Average</div><div class="v" id="fAvg">—<small>km/L</small></div></div>
       <div class="cell"><div class="k">L/100<span id="fU2">km</span></div><div class="v" id="fL100">—</div></div>
     </div>
-    <div class="cell" style="gap:12px">
+    <div class="card">
+      <button class="bigbtn ghostbig" id="scanBtn">📷 &nbsp;Scan pump photo</button>
+      <div class="hint">Snap the lit number panel. Auto-read is optional; you always type the odometer.</div>
+      <input type="file" id="scanFile" accept="image/*" capture="environment" hidden>
+      <div id="scanBox" class="scanbox hide"></div>
       <div class="row">
-        <label class="fld">Odometer now (<span class="fuU">km</span>)<input id="fuelOdo" type="number" inputmode="decimal" placeholder="e.g. 12840"></label>
+        <label class="fld"><span>Odometer (<span class="fuU">km</span>)</span><input id="fuelOdo" type="number" inputmode="decimal" placeholder="e.g. 12840"></label>
         <label class="fld">Litres filled<input id="fuelLit" type="number" inputmode="decimal" placeholder="e.g. 7.2"></label>
       </div>
       <label class="fld">Fuel grade
@@ -224,12 +517,68 @@
         </select>
       </label>
       <label class="fld">Price paid (optional)<input id="fuelPrice" type="number" inputmode="decimal" placeholder="e.g. 18.50"></label>
-      <label class="chk"><input type="checkbox" id="fuelFull" checked> Filled the tank to full</label>
-      <button class="btn go" id="fuelAdd">Add fill-up</button>
+      <label class="chk"><input type="checkbox" id="fuelFull" checked> I filled the tank right to full</label>
+      <button class="bigbtn save" id="fuelAdd">⛽ &nbsp;Add this fill-up</button>
     </div>
     <div><div class="caption" style="margin-bottom:8px">Fill-ups</div><div class="list" id="fuelList"></div></div>
   </section>
+
+  <!-- ===================== BACKUP / SETUP ===================== -->
+  <section id="scr-backup" hidden>
+    <h2>Backup</h2>
+    <div class="okbox" id="autoSaveLine">✓ Your rides are saved automatically on this phone.</div>
+
+    <div class="card">
+      <h3>💾 Save &amp; restore</h3>
+      <p class="sub">A backup is <b>one small file</b> with all your rides and fuel. Save it to your phone (Files app) or email it to yourself. If you ever clear Safari or change phone, tap <b>Restore</b> and pick that file to get everything back.</p>
+      <button class="bigbtn save" id="saveBtn2">💾 &nbsp;Save a backup file</button>
+      <div class="hint" id="lastBackupLine">Not backed up yet</div>
+      <button class="bigbtn load" id="restoreBtn2">📂 &nbsp;Restore from a file</button>
+      <div class="hint">Restoring <b>adds</b> rides from the file — it never deletes what you already have.</div>
+      <input type="file" id="restoreFile" accept=".json,application/json,text/plain" hidden>
+      <details>
+        <summary class="caption" style="cursor:pointer">Other ways (paste text)</summary>
+        <div class="row" style="margin-top:10px">
+          <button class="btn" id="copyTextBtn">Copy backup as text</button>
+          <button class="btn" id="pasteTextBtn">Paste text to restore</button>
+        </div>
+      </details>
+    </div>
+
+    <div class="note" id="homeTip">
+      ⚠️ <b>Do this once:</b> add this page to your Home Screen so your phone never deletes your rides.
+      In Safari tap the <b>Share</b> button <span class="pill">▵</span>, scroll down, tap <b>Add to Home Screen</b>, then open it from that icon from now on.
+    </div>
+
+    <div class="card">
+      <h3>⚙️ Settings</h3>
+      <div class="setrow">
+        <span class="sub">Distance unit</span>
+        <div class="seg" id="unitSeg"><button data-u="km" class="on">km</button><button data-u="mi">mi</button></div>
+      </div>
+      <div class="setrow">
+        <span class="sub">Phone mount</span>
+        <div class="seg" id="mountSeg"><button data-m="portrait" class="on">Portrait</button><button data-m="landscape">Landscape</button></div>
+      </div>
+      <div class="setrow">
+        <span class="sub">Keep screen on while riding</span>
+        <div class="seg" id="awakeSeg"><button data-a="on" class="on">On</button><button data-a="off">Off</button></div>
+      </div>
+      <div class="setrow">
+        <span class="sub">Rain alerts while riding <span class="pill">needs internet</span></span>
+        <div class="seg" id="rainSeg"><button data-r="on" class="on">On</button><button data-r="off">Off</button></div>
+      </div>
+      <p class="sub">Lean comes from the phone's tilt — mount it firmly, and on the recording screen tap <b>Set upright</b> while stopped to zero it.</p>
+    </div>
+  </section>
 </main>
+
+<!-- bottom nav -->
+<nav class="bottomnav" id="bottomNav">
+  <button id="navTrips" class="on" data-scr="scr-trips"><span class="ic">🏍️</span>Rides</button>
+  <button id="navFuel" data-scr="scr-fuel"><span class="ic">⛽</span>Fuel</button>
+  <button id="navBackup" data-scr="scr-backup"><span class="ic">💾</span>Backup</button>
+</nav>
 
 <!-- odometer prompt modal -->
 <div class="scrim" id="scrim">
@@ -237,19 +586,44 @@
     <h3 id="mTitle">Odometer now</h3>
     <p id="mSub">Read the number off your bike's dash.</p>
     <label class="fld"><span id="mLabel">Odometer (km)</span><input id="mOdo" type="number" inputmode="decimal" placeholder="e.g. 12800"></label>
-    <div class="note" id="mNote" hidden></div>
     <div class="row">
-      <button class="btn ghost" id="mCancel">Cancel</button>
+      <button class="btn ghost" id="mCancel">Skip</button>
       <button class="btn go" id="mOk">Start ride</button>
     </div>
   </div>
 </div>
 
-<!-- share/copy fallback modal -->
+<!-- mount calibration modal -->
+<div class="scrim" id="calScrim">
+  <div class="modal">
+    <h3>Calibrate the mount</h3>
+    <p>Teaches the app which way the phone points, so it can split acceleration into forward / braking, cornering and engine vibration. Do this once per mount position.</p>
+    <div class="calsteps">
+      <div class="calstep" id="calS1"><div class="n">1</div><div class="body">
+        <b>Hold the bike upright &amp; still</b>
+        <p>Phone mounted as you'll ride. Then tap Capture.</p>
+        <div class="live" id="calS1Live"></div>
+        <button class="btn go" id="calCapUp" style="margin-top:8px">Capture upright</button>
+      </div></div>
+      <div class="calstep" id="calS2"><div class="n">2</div><div class="body">
+        <b>Set which way is forward</b>
+        <p>Either tap <b>Auto</b> — the app locks forward from your first firm acceleration while riding — or roll/push straight for 2 s and tap <b>Capture now</b>.</p>
+        <div class="live" id="calS2Live">forward axis: not set</div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn" id="calAuto">Auto (while riding)</button>
+          <button class="btn go" id="calCapFwd">Capture now</button>
+        </div>
+      </div></div>
+    </div>
+    <div class="row"><button class="btn ghost" id="calClose">Done</button></div>
+  </div>
+</div>
+
+<!-- text fallback modal -->
 <div class="scrim" id="scrim2">
   <div class="modal">
-    <h3 id="m2Title">Export</h3>
-    <p class="sub">Your device couldn't open the share sheet. Select all and copy, then paste into Notes, Mail or Files.</p>
+    <h3 id="m2Title">Backup text</h3>
+    <p class="sub" id="m2Sub">Select all, copy, and keep it somewhere safe (Notes or Mail).</p>
     <textarea id="m2Text" readonly></textarea>
     <div class="row">
       <button class="btn go" id="m2Copy">Copy</button>
@@ -258,183 +632,435 @@
   </div>
 </div>
 
+<!-- v11: forced pre-ride checklist -->
+<div class="scrim" id="gateScrim">
+  <div class="modal">
+    <h3>Before you ride</h3>
+    <p>Three quick checks so your numbers come out clean. <b>Start ride</b> unlocks when they're green.</p>
+    <div class="calsteps">
+      <div class="gatestep" id="gStepGps"><div class="gn">1</div><div class="gbody">
+        <b>Good GPS fix</b>
+        <p>Wait for the phone to lock onto satellites (be outdoors, helmet/phone on the bars).</p>
+        <div class="glive" id="gGpsLive">getting GPS…</div>
+        <button class="btn" id="gGpsSkip" style="display:none">Proceed with weak GPS</button>
+      </div></div>
+      <div class="gatestep" id="gStepCal"><div class="gn">2</div><div class="gbody">
+        <b>Calibrate the mount</b>
+        <p>Hold the bike upright &amp; still, capture, then one firm pull for “forward”. This is what makes lean / g / gear correct — skipping it is why the first ride's dynamics were wrong.</p>
+        <div class="glive" id="gCalLive">not calibrated yet</div>
+        <button class="btn" id="gCalBtn">Open calibration</button>
+      </div></div>
+      <div class="gatestep" id="gStepAck"><div class="gn">3</div><div class="gbody">
+        <b>Mounted &amp; ready</b>
+        <p>Phone clamped firmly; the screen locks above ~8&nbsp;km/h. GPS will drop in tunnels (e.g. the CTE) — those stretches are auto-flagged and left out of the numbers.</p>
+        <label class="chk" style="margin-top:8px"><input type="checkbox" id="gAck"> I'm set — phone mounted, I'll ride safely</label>
+      </div></div>
+    </div>
+    <div class="row">
+      <button class="btn ghost" id="gateCancel">Cancel</button>
+      <button class="btn go" id="gateStart" disabled>Start ride</button>
+    </div>
+  </div>
+</div>
+
+<!-- v11: on-screen numeric keypad (no native input → no iOS "Undo Typing" popup) -->
+<div class="scrim" id="kpScrim">
+  <div class="modal">
+    <h3 id="kpTitle">Enter number</h3>
+    <p id="kpSub" class="sub"></p>
+    <div class="kpdisp" id="kpDisp"><span class="ph" id="kpPh">0</span></div>
+    <div class="kpgrid" id="kpGrid">
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+      <button data-k=".">.</button><button data-k="0">0</button><button data-k="del" class="kpdel">⌫</button>
+    </div>
+    <div class="row">
+      <button class="btn ghost" id="kpSkip">Skip</button>
+      <button class="btn go" id="kpOk">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- v11: stop-ride confirmation -->
+<div class="scrim" id="stopScrim">
+  <div class="modal">
+    <h3>Confirm stop ride?</h3>
+    <p>This ends recording and saves the ride — you can't resume it afterwards.</p>
+    <div class="row">
+      <button class="btn ghost" id="stopCancel">Cancel — keep riding</button>
+      <button class="btn danger" id="stopConfirm">Stop &amp; save</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 (function(){
 "use strict";
 var $=function(s){return document.getElementById(s)};
 var LS={trips:'ridelog.trips.v1', fuel:'ridelog.fuel.v1', cfg:'ridelog.cfg.v1'};
 
-/* ---------- storage helpers (defensive) ---------- */
+/* ---------- storage (defensive) ---------- */
 function load(k,def){try{var r=localStorage.getItem(k);return r?JSON.parse(r):def;}catch(e){return def;}}
 function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
+try{ if(navigator.storage&&navigator.storage.persist){navigator.storage.persist().catch(function(){});} }catch(e){}
 
-var cfg=load(LS.cfg,{unit:'km',mount:'portrait',keepAwake:'on',lastGrade:'Shell V-Power'});
+var cfg=load(LS.cfg,{unit:'km',mount:'portrait',keepAwake:'on',lastGrade:'Shell V-Power',lastBackup:null,tipDismiss:false});
+if(!cfg.unit)cfg.unit='km';
 if(!cfg.keepAwake)cfg.keepAwake='on';
 if(!cfg.lastGrade)cfg.lastGrade='Shell V-Power';
+if(!cfg.rainAlerts)cfg.rainAlerts='on';
+if(!cfg.basemap)cfg.basemap='streets';
+if(!cfg.streetsDefault){ cfg.basemap='streets'; cfg.streetsDefault=true; save(LS.cfg,cfg); }  /* v15: OSM Streets is the reliable default base (Esri could show placeholder tiles) */
+if(cfg.basemap==='light'||cfg.basemap==='sat')cfg.basemap='streets';   /* v16: Esri 'light' + 'sat' bases removed (all-OSM now) */
+if(cfg.imuCal===undefined)cfg.imuCal=null;
+if(cfg.coachDone===undefined)cfg.coachDone=false;
+/* v11 */
+if(cfg.lockSpeed==null)cfg.lockSpeed=8;             /* km/h to engage ride-lock */
+if(cfg.autoAdvance===undefined)cfg.autoAdvance=false;
+if(!cfg.dwell)cfg.dwell={dash:30,wx:5}; /* v12: ride rotation hold times (s): Dashboard, Weather */
+if(cfg.dwell.dash==null)cfg.dwell.dash=30; if(cfg.dwell.wx==null)cfg.dwell.wx=5;
+if(cfg.rideFollow===undefined)cfg.rideFollow=true;
 var trips=load(LS.trips,[]);
 var fuel=load(LS.fuel,[]);
 
 /* ---------- units ---------- */
 function uLabel(){return cfg.unit;}
-function kmTo(x){return cfg.unit==='mi'?x*0.621371:x;}      // km -> display
-function toKm(x){return cfg.unit==='mi'?x/0.621371:x;}      // display -> km
-function spd(kmh){return cfg.unit==='mi'?kmh*0.621371:kmh;} // km/h -> display speed
+function kmTo(x){return cfg.unit==='mi'?x*0.621371:x;}
+function toKm(x){return cfg.unit==='mi'?x/0.621371:x;}
+function spd(kmh){return cfg.unit==='mi'?kmh*0.621371:kmh;}
 function fmt(n,d){n=(isFinite(n)?n:0);return n.toFixed(d==null?0:d);}
 
+/* ---------- toast ---------- */
+function toast(msg){var t=$('toast');t.textContent=msg;t.classList.add('on');clearTimeout(t._h);t._h=setTimeout(function(){t.classList.remove('on');},2800);}
+
+/* ---------- online indicator ---------- */
+function updateNet(){var on=navigator.onLine;$('netDot').className='dot '+(on?'ok':'');$('netTxt').textContent=on?'online':'offline';}
+window.addEventListener('online',updateNet);window.addEventListener('offline',updateNet);updateNet();
+
 /* ---------- navigation ---------- */
-var SCREENS=['scr-trips','scr-record','scr-trip','scr-fuel'];
-function show(id){SCREENS.forEach(function(s){$(s).hidden=(s!==id);});
+var SCREENS=['scr-trips','scr-record','scr-trip','scr-fuel','scr-backup','scr-map'];
+var NAVSCR={'scr-trips':1,'scr-fuel':1,'scr-backup':1};
+function show(id){
+  SCREENS.forEach(function(s){$(s).hidden=(s!==id);});
+  $('bottomNav').classList.toggle('hide',!NAVSCR[id]);
   $('navTrips').classList.toggle('on',id==='scr-trips');
   $('navFuel').classList.toggle('on',id==='scr-fuel');
-  window.scrollTo(0,0);}
+  $('navBackup').classList.toggle('on',id==='scr-backup');
+  if(id!=='scr-map'&&liveGeo!=null){try{navigator.geolocation.clearWatch(liveGeo);}catch(e){}liveGeo=null;}
+  window.scrollTo(0,0);
+}
 $('navTrips').onclick=function(){show('scr-trips');renderTrips();};
 $('navFuel').onclick=function(){show('scr-fuel');renderFuel();};
+$('navBackup').onclick=function(){show('scr-backup');refreshBackup();};
 
 /* ---------- settings segments ---------- */
 function wireSeg(segId,key,render){
   var seg=$(segId);
   seg.querySelectorAll('button').forEach(function(b){
-    var val=b.getAttribute('data-u')||b.getAttribute('data-m')||b.getAttribute('data-a');
+    var val=b.getAttribute('data-u')||b.getAttribute('data-m')||b.getAttribute('data-a')||b.getAttribute('data-r');
     b.onclick=function(){
       [].forEach.call(seg.children,function(c){c.classList.remove('on');});
-      b.classList.add('on');
-      cfg[key]=val;
-      save(LS.cfg,cfg); if(render) render();
+      b.classList.add('on'); cfg[key]=val; save(LS.cfg,cfg); if(render)render();
     };
     b.classList.toggle('on',val===cfg[key]);
   });
 }
-wireSeg('unitSeg','unit',function(){applyUnitLabels();renderTrips();renderFuel();});
+wireSeg('unitSeg','unit',function(){applyUnitLabels();renderTrips();renderFuel();toast('Unit: '+uLabel());});
 wireSeg('mountSeg','mount',null);
 wireSeg('awakeSeg','keepAwake',null);
+wireSeg('rainSeg','rainAlerts',null);
 
 function applyUnitLabels(){
-  $('sumDistU').textContent=uLabel();
-  $('rDistU').textContent=uLabel(); $('rSpeedU').textContent=(cfg.unit==='mi'?'MPH':'KM/H');
-  $('fU2').textContent=uLabel();
+  function set(id,v){var e=$(id); if(e)e.textContent=v;}
+  set('sumDistU',uLabel()); set('rDistU',uLabel());
+  set('rSpeedU',cfg.unit==='mi'?'MPH':'KM/H'); set('fU2',uLabel());
   [].forEach.call(document.querySelectorAll('.fuU'),function(e){e.textContent=uLabel();});
 }
 
 /* ================= RECORDING ================= */
 var rec=null, geoId=null, wakeLock=null, timer=null;
 var leanZero={gamma:0,beta:0}, curLean=0, curG=1;
+var recRainTimer=null, rainMutedUntil=0, prevLive=null, lastRainChk=0, actx=null;
+
+/* ---------- IMU: vector math + calibrated accel split (v8) ---------- */
+function vadd(a,b){return [a[0]+b[0],a[1]+b[1],a[2]+b[2]];}
+function vsub(a,b){return [a[0]-b[0],a[1]-b[1],a[2]-b[2]];}
+function vscale(a,s){return [a[0]*s,a[1]*s,a[2]*s];}
+function vdot(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+function vcross(a,b){return [a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];}
+function vlen(a){return Math.sqrt(vdot(a,a));}
+function vnorm(a){var l=vlen(a)||1;return [a[0]/l,a[1]/l,a[2]/l];}
+function vavg(list){if(!list||!list.length)return null;var s=[0,0,0];list.forEach(function(v){s=vadd(s,v);});return vscale(s,1/list.length);}
+var VIBK=10;
+var imu={grav:null,gravLP:null,fwd:null,lat:null,fwdLock:false,autoLearn:true,
+  gFwd:0,gLat:0,gUp:0,yaw:0,vib:0,sU:0,vibMeanLP:null,vMeanLP:null,
+  aLongPk:0,aLatPk:0,yawPk:0,vibSum:0,vibN:0, learnBuf:[], engCap:null, uiTick:0};
+function imuReset(){
+  imu.grav=(cfg.imuCal&&cfg.imuCal.grav)?cfg.imuCal.grav.slice():null;
+  imu.fwd=(cfg.imuCal&&cfg.imuCal.fwd)?cfg.imuCal.fwd.slice():null;
+  imu.lat=(imu.grav&&imu.fwd)?vnorm(vcross(vnorm(imu.grav),imu.fwd)):null;
+  imu.fwdLock=!!(imu.fwd&&imu.lat);
+  imu.gravLP=null; imu.vibMeanLP=null; imu.vMeanLP=null; imu.learnBuf=[]; imu.engCap=null;
+  imuResetWindow();
+}
+function imuResetWindow(){ imu.aLongPk=0; imu.aLatPk=0; imu.yawPk=0; imu.vibSum=0; imu.vibN=0; }
+function updateImuStat(){ var el=$('imuStat'),t=$('imuStatTxt'); if(!el||!t)return;
+  el.className='imustat'+(imu.fwdLock?' ok':((cfg.imuCal&&cfg.imuCal.grav)?' learn':''));
+  t.textContent=imu.fwdLock?'IMU: forward locked ✓ — full accel / brake / corner split'
+    :((cfg.imuCal&&cfg.imuCal.grav)?'IMU: upright set — set "forward" to split accel / brake'
+    :'IMU: auto-sets "forward" on your first firm pull — just ride'); }
+function requestMotionPerm(){ try{
+  if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){DeviceMotionEvent.requestPermission().catch(function(){});}
+  if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){DeviceOrientationEvent.requestPermission().catch(function(){});}
+}catch(e){} }
 
 function startFlow(){
-  openOdoModal('Odometer before ride', 'Read it off your dash so fuel use can be worked out. You can skip it.',
-    uLabel(), 'Start ride', function(odo){
-      beginRide(odo);
-    });
+  openOdoModal('Odometer before ride','Read it off your dash so fuel use can be worked out. You can skip it.',
+    uLabel(),'Start ride',function(odo){beginRide(odo);});
 }
-
 function beginRide(startOdo){
   try{
-    if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){DeviceOrientationEvent.requestPermission().catch(function(){});}
-    if(typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function'){DeviceMotionEvent.requestPermission().catch(function(){});}
+    if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){DeviceOrientationEvent.requestPermission().catch(function(){});}
+    if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){DeviceMotionEvent.requestPermission().catch(function(){});}
   }catch(e){}
   window.addEventListener('deviceorientation',onOrient,true);
   window.addEventListener('devicemotion',onMotion,true);
+  imuReset();
 
   rec={startTs:Date.now(), startOdo:(startOdo==null?null:toKm(startOdo)), unit:cfg.unit,
        track:[], distM:0, lastLat:null,lastLon:null,lastAlt:null, altGain:0,
-       maxSpeed:0, maxLean:0, maxG:1, lastPush:0};
+       lastValidLat:null,lastValidLon:null,lastValidT:0,lastValid:true,wasInvalid:false,badPts:0,
+       maxSpeed:0, maxLean:0, maxG:1, lastPush:0, spdHist:[], engSamples:[]};
   $('ptCount').textContent='0 pts';
   $('gpsDot').className='dot'; $('gpsTxt').textContent='waiting for GPS…';
   $('rSpeed').textContent='0'; $('rDist').textContent='0.0'; $('rTime').textContent='0:00';
-  $('rMaxS').textContent='0'; $('rMaxL').textContent='0°'; $('rG').innerHTML='1.0<small>g</small>';
+  $('rMaxS').textContent='0'; $('rMaxL').textContent='0°'; $('rMaxG').textContent='1.0';
+  $('rGlong').innerHTML='0.00<small>g</small>'; $('rGlat').innerHTML='0.00<small>g</small>'; $('rVibe').textContent='0';
+  updateImuStat();
+  $('rideCoach').classList.toggle('hide', !!cfg.coachDone);
+  drawRoute('liveTrace',[]);
 
   if(navigator.geolocation){
     geoId=navigator.geolocation.watchPosition(onPos,onGeoErr,{enableHighAccuracy:true,maximumAge:1000,timeout:20000});
-  }else{
-    $('gpsTxt').textContent='no GPS on this browser';
-  }
+  }else{ $('gpsTxt').textContent='no GPS on this browser'; }
   requestWake();
   timer=setInterval(tickTime,1000);
+  setRainWarn(null);
+  recRainTimer=setInterval(recRainCheck,180000); setTimeout(recRainCheck,20000);
   $('recBadge').textContent='● RECORDING';
   show('scr-record');
+  document.body.classList.add('riding');
+  rideLockSet(false);
+  rideFollow=(cfg.rideFollow!==false);
+  pagerInit(); rideMapInit(); updateFollowBtn();
+  rainHold=false; rideWxRefresh(); setRotate(true);
 }
-
+var GPS_GOOD=15, GPS_BAD=35, GPS_MAXKMH=160;   /* v11 gating thresholds */
 function onPos(p){
-  if(!rec) return;
-  var c=p.coords, now=Date.now();
-  $('gpsDot').className='dot '+(c.accuracy<=25?'ok':'warn');
-  $('gpsTxt').textContent='GPS ±'+fmt(c.accuracy)+'m';
-  var kmh=(c.speed!=null && c.speed>=0)? c.speed*3.6 : null;
-  if(kmh!=null){ $('rSpeed').textContent=fmt(spd(kmh)); if(kmh>rec.maxSpeed){rec.maxSpeed=kmh; $('rMaxS').textContent=fmt(spd(kmh));}}
-  if(rec.lastLat!=null){var m=hav(rec.lastLat,rec.lastLon,c.latitude,c.longitude);
-    if(isFinite(m)&&m<400){rec.distM+=m;}}
-  rec.lastLat=c.latitude; rec.lastLon=c.longitude;
-  if(c.altitude!=null){ if(rec.lastAlt!=null){var da=c.altitude-rec.lastAlt; if(da>1)rec.altGain+=da;} rec.lastAlt=c.altitude; }
-  $('rDist').innerHTML=fmt(kmTo(rec.distM/1000),1)+'<small>'+uLabel()+'</small>';
+  if(!rec)return;
+  var c=p.coords, now=Date.now(), acc=(c.accuracy==null?999:c.accuracy);
+  /* ---- GPS validity gate: poor accuracy, or an impossible jump (GPS re-acquiring after a tunnel) ---- */
+  var valid = acc<=GPS_BAD;                         /* poor accuracy = invalid point (drawn as a gap) */
+  var jump=false;                                    /* good fix but impossible jump = GPS re-acquiring after a gap */
+  if(valid && rec.lastValidLat!=null){
+    var jg=hav(rec.lastValidLat,rec.lastValidLon,c.latitude,c.longitude), dts=(now-rec.lastValidT)/1000;
+    if(dts>0 && (jg/dts)*3.6 > GPS_MAXKMH) jump=true;
+  }
+  rec.lastValid=valid; if(!valid)rec.badPts++;
+  $('gpsDot').className='dot '+(valid?(acc<=GPS_GOOD?'ok':'warn'):'');
+  $('gpsTxt').textContent=valid?('GPS ±'+fmt(acc)+'m'):('GPS lost (±'+fmt(acc)+'m)');
+  var gw=$('rideGpsWarn'); if(gw)gw.classList.toggle('on',!valid);
+
+  var kmh=(c.speed!=null&&c.speed>=0)?c.speed*3.6:null;
+  if(kmh!=null && kmh<=GPS_MAXKMH){
+    $('rSpeed').textContent=fmt(spd(kmh));
+    if(valid && !jump && kmh>rec.maxSpeed){rec.maxSpeed=kmh;$('rMaxS').textContent=fmt(spd(kmh));}
+    rec.spdHist.push([now,kmh]); if(rec.spdHist.length>8)rec.spdHist.shift();
+    if(valid && !jump && imu.autoLearn&&!imu.fwdLock) tryLearnFwd(now,kmh);
+    updateLock(kmh);
+  }
+
+  if(valid){
+    var skipDist = jump || rec.wasInvalid;           /* don't count the straight-line jump across a GPS gap */
+    if(!skipDist && rec.lastValidLat!=null){ var m=hav(rec.lastValidLat,rec.lastValidLon,c.latitude,c.longitude);
+      if(isFinite(m)&&m<400){rec.distM+=m;} if(m>3)rec.brg=bearing([rec.lastValidLat,rec.lastValidLon],[c.latitude,c.longitude]); }
+    rec.lastValidLat=c.latitude; rec.lastValidLon=c.longitude; rec.lastValidT=now; rec.wasInvalid=false;
+    if(c.altitude!=null){ if(rec.lastAlt!=null){var da=c.altitude-rec.lastAlt; if(da>1)rec.altGain+=da;} rec.lastAlt=c.altitude; }
+  } else { rec.wasInvalid=true; }
+  rec.lastLat=c.latitude; rec.lastLon=c.longitude;   /* last seen (rain/map), valid or not */
+  $('rDist').textContent=fmt(kmTo(rec.distM/1000),1);
+  rideMapUpdate(c,valid);
+
   if(now-rec.lastPush>=950){
     rec.lastPush=now;
-    rec.track.push([Math.round((now-rec.startTs)/1000),
-      +c.latitude.toFixed(5), +c.longitude.toFixed(5),
-      kmh!=null?+kmh.toFixed(1):0, +curLean.toFixed(1),
-      c.altitude!=null?Math.round(c.altitude):null]);
+    var iLong=imu.aLongPk, iLat=imu.aLatPk, iYaw=imu.yawPk, iVib=(imu.vibN?Math.sqrt(imu.vibSum/imu.vibN):0)*VIBK;
+    rec.track.push([Math.round((now-rec.startTs)/1000),+c.latitude.toFixed(5),+c.longitude.toFixed(5),
+      kmh!=null?+kmh.toFixed(1):0,+curLean.toFixed(1),c.altitude!=null?Math.round(c.altitude):null,
+      +iLong.toFixed(2),+iLat.toFixed(2),Math.round(iYaw),Math.round(iVib),
+      Math.round(acc), valid?1:0]);   /* v11 schema 9: +acc_m, +valid */
+    imuResetWindow();
     $('ptCount').textContent=rec.track.length+' pts';
+    if(rec.track.length%2===0) drawRoute('liveTrace',rec.track);
   }
 }
 function onGeoErr(e){ if(!rec)return; $('gpsDot').className='dot'; $('gpsTxt').textContent='GPS: '+e.message; }
 
-function mountRaw(e){ return cfg.mount==='landscape' ? (e.beta||0) : (e.gamma||0); }
+function mountRaw(e){ return cfg.mount==='landscape'?(e.beta||0):(e.gamma||0); }
 function onOrient(e){
-  var raw=mountRaw(e);
-  var zero=cfg.mount==='landscape'?leanZero.beta:leanZero.gamma;
-  curLean=Math.max(-60,Math.min(60, raw-zero));
-  if(rec){
-    var a=Math.abs(curLean);
-    if(a>rec.maxLean){rec.maxLean=a; $('rMaxL').textContent=fmt(a)+'°';}
+  var raw=mountRaw(e), zero=cfg.mount==='landscape'?leanZero.beta:leanZero.gamma;
+  curLean=Math.max(-60,Math.min(60,raw-zero));
+  if(rec){ var a=Math.abs(curLean);
+    if(a>rec.maxLean){rec.maxLean=a;$('rMaxL').textContent=fmt(a)+'°';}
     $('rLean').textContent=fmt(a)+'° '+(curLean<0?'L':'R');
     $('rLeanCell').classList.toggle('hi',a>40);
   }
 }
 function onMotion(e){
-  var a=e.accelerationIncludingGravity; if(!a)return;
-  curG=Math.sqrt((a.x||0)*(a.x||0)+(a.y||0)*(a.y||0)+(a.z||0)*(a.z||0))/9.81;
-  if(rec){ if(curG>rec.maxG)rec.maxG=curG; $('rG').innerHTML=fmt(curG,1)+'<small>g</small>'; }
+  var ag=e.accelerationIncludingGravity, al=e.acceleration, rr=e.rotationRate;
+  if(ag){ var gv=[ag.x||0,ag.y||0,ag.z||0];
+    imu.gravLP=imu.gravLP?[imu.gravLP[0]+(gv[0]-imu.gravLP[0])*0.08,imu.gravLP[1]+(gv[1]-imu.gravLP[1])*0.08,imu.gravLP[2]+(gv[2]-imu.gravLP[2])*0.08]:gv.slice();
+    curG=vlen(gv)/9.81;
+  }
+  var lin;
+  if(al&&(al.x!=null||al.y!=null||al.z!=null)) lin=[al.x||0,al.y||0,al.z||0];
+  else if(ag&&imu.gravLP) lin=vsub([ag.x||0,ag.y||0,ag.z||0],imu.gravLP);
+  else lin=[0,0,0];
+  var up=imu.grav||imu.gravLP; up=up?vnorm(up):[0,0,1];
+  imu.gUp=vdot(lin,up)/9.81;
+  var horiz=vsub(lin,vscale(up,vdot(lin,up)));
+  if(imu.fwdLock&&imu.fwd&&imu.lat){ imu.gFwd=vdot(lin,imu.fwd)/9.81; imu.gLat=vdot(lin,imu.lat)/9.81; }
+  else { imu.gFwd=vlen(horiz)/9.81; imu.gLat=0; imu.learnBuf.push({t:Date.now(),h:horiz}); if(imu.learnBuf.length>150)imu.learnBuf.shift(); }
+  if(rr){ imu.yaw=vdot([rr.beta||0,rr.gamma||0,rr.alpha||0],up); }
+  var lm=vlen(lin);
+  imu.vibMeanLP=(imu.vibMeanLP==null)?lm:(imu.vibMeanLP*0.88+lm*0.12); imu.vib=Math.abs(lm-imu.vibMeanLP);
+  var sU=vdot(lin,up); imu.vMeanLP=(imu.vMeanLP==null)?sU:(imu.vMeanLP*0.85+sU*0.15); imu.sU=sU-imu.vMeanLP;
+  if(imu.engCap) imu.engCap.data.push(+imu.sU.toFixed(3));
+  if(rec){
+    if(Math.abs(imu.gFwd)>Math.abs(imu.aLongPk))imu.aLongPk=imu.gFwd;
+    if(Math.abs(imu.gLat)>Math.abs(imu.aLatPk))imu.aLatPk=imu.gLat;
+    if(Math.abs(imu.yaw)>Math.abs(imu.yawPk))imu.yawPk=imu.yaw;
+    imu.vibSum+=imu.vib*imu.vib; imu.vibN++;
+    if(curG>rec.maxG){rec.maxG=curG; var mg=$('rMaxG'); if(mg)mg.textContent=fmt(curG,1);}
+    if((++imu.uiTick%4)===0){
+      var gl=$('rGlong'); if(gl){ var sgn=imu.fwdLock?((imu.gFwd>=0?'+':'')+fmt(imu.gFwd,2)):fmt(imu.gFwd,2);
+        gl.innerHTML=sgn+'<small>g</small>'; gl.className='v'+(imu.fwdLock&&imu.gFwd<-0.05?' neg':(imu.fwdLock&&imu.gFwd>0.05?' pos':'')); }
+      var gc=$('rGlat'); if(gc)gc.innerHTML=fmt(Math.abs(imu.gLat),2)+'<small>g</small>';
+      var vb=$('rVibe'); if(vb)vb.textContent=Math.min(999,Math.round(imu.vib*VIBK));
+    }
+  }
 }
 $('calBtn').onclick=function(){
-  var handler=function(e){ leanZero.gamma=e.gamma||0; leanZero.beta=e.beta||0;
-    window.removeEventListener('deviceorientation',handler,true);
-    $('calBtn').textContent='Zeroed ✓'; setTimeout(function(){$('calBtn').textContent='Set upright';},1200);
+  var h=function(e){ leanZero.gamma=e.gamma||0; leanZero.beta=e.beta||0;
+    window.removeEventListener('deviceorientation',h,true);
+    $('calBtn').textContent='Zeroed ✓'; setTimeout(function(){$('calBtn').textContent='Set upright (zero the lean)';},1200);
   };
-  window.addEventListener('deviceorientation',handler,true);
+  window.addEventListener('deviceorientation',h,true);
 };
-function tickTime(){ if(!rec)return; var s=Math.floor((Date.now()-rec.startTs)/1000); $('rTime').textContent=mmss(s); }
+function tickTime(){ if(!rec)return; $('rTime').textContent=mmss(Math.floor((Date.now()-rec.startTs)/1000)); }
+
+/* ---------- IMU: learn "forward", calibrate upright, engine sample (v8) ---------- */
+function tryLearnFwd(now,kmh){
+  if(!rec||!rec.spdHist.length)return;
+  var old=null; for(var i=0;i<rec.spdHist.length;i++){ if(now-rec.spdHist[i][0]>=2000) old=rec.spdHist[i]; }
+  if(!old || (kmh-old[1])<7) return;                 /* need +7 km/h over >=2 s */
+  var lo=now-2600, hs=imu.learnBuf.filter(function(b){return b.t>=lo;}).map(function(b){return b.h;});
+  if(hs.length<8) return;
+  var mean=vavg(hs); if(!mean||vlen(mean)<0.5) return;
+  var avgLen=0; hs.forEach(function(h){avgLen+=vlen(h);}); avgLen/=hs.length;
+  if(vlen(mean) < 0.45*avgLen) return;               /* incoherent (turning) — skip */
+  var upn=vnorm(imu.grav||imu.gravLP||[0,0,9.81]);
+  imu.fwd=vnorm(vsub(mean,vscale(upn,vdot(mean,upn)))); imu.lat=vnorm(vcross(upn,imu.fwd)); imu.fwdLock=true;
+  if(!cfg.imuCal)cfg.imuCal={}; cfg.imuCal.grav=upn; cfg.imuCal.fwd=imu.fwd; cfg.imuCal.ts=Date.now(); save(LS.cfg,cfg);
+  updateImuStat(); toast('Forward axis locked ✓');
+}
+function captureUpright(liveEl,doneCb){
+  requestMotionPerm(); var raw=[];
+  function h(e){ var ag=e.accelerationIncludingGravity; if(ag){ raw.push([ag.x||0,ag.y||0,ag.z||0]); if(liveEl)liveEl.textContent='reading sensor… '+raw.length; } }
+  window.addEventListener('devicemotion',h,true); if(liveEl)liveEl.textContent='hold still…';
+  setTimeout(function(){ window.removeEventListener('devicemotion',h,true);
+    if(raw.length<5){ if(liveEl)liveEl.textContent='no sensor data — allow Motion access and retry'; return; }
+    var g=vavg(raw); imu.grav=g;
+    if(!cfg.imuCal)cfg.imuCal={}; cfg.imuCal.grav=vnorm(g); save(LS.cfg,cfg);
+    updateImuStat(); if(liveEl)liveEl.textContent='upright captured ✓ (rest = '+fmt(vlen(g)/9.81,2)+' g)'; if(doneCb)doneCb();
+  },1700);
+}
+function captureForward(liveEl,doneCb){
+  requestMotionPerm(); var raw=[],lin=[];
+  function h(e){ var ag=e.accelerationIncludingGravity, al=e.acceleration;
+    if(ag)raw.push([ag.x||0,ag.y||0,ag.z||0]); if(al&&al.x!=null)lin.push([al.x||0,al.y||0,al.z||0]);
+    if(liveEl)liveEl.textContent='capturing… '+(lin.length||raw.length); }
+  window.addEventListener('devicemotion',h,true); if(liveEl)liveEl.textContent='accelerate / roll straight…';
+  setTimeout(function(){ window.removeEventListener('devicemotion',h,true);
+    var gravv=imu.grav||vavg(raw)||[0,0,9.81], upn=vnorm(gravv);
+    var src = lin.length>=6?lin:raw.map(function(s){return vsub(s,gravv);});
+    if(src.length<6){ if(liveEl)liveEl.textContent='no sensor data — allow Motion access and retry'; return; }
+    var hs=src.map(function(s){return vsub(s,vscale(upn,vdot(s,upn)));});
+    var mean=vavg(hs); if(!mean||vlen(mean)<0.5){ if(liveEl)liveEl.textContent='not enough forward motion — push firmer and retry'; return; }
+    imu.grav=gravv; imu.fwd=vnorm(mean); imu.lat=vnorm(vcross(upn,imu.fwd)); imu.fwdLock=true;
+    if(!cfg.imuCal)cfg.imuCal={}; cfg.imuCal.grav=upn; cfg.imuCal.fwd=imu.fwd; cfg.imuCal.ts=Date.now(); save(LS.cfg,cfg);
+    updateImuStat(); if(liveEl)liveEl.textContent='forward locked ✓'; toast('Forward axis locked ✓'); if(doneCb)doneCb();
+  },2400);
+}
+function startEngineSample(){
+  if(!rec){ toast('Start a ride first'); return; }
+  if(imu.engCap){ toast('Already sampling…'); return; }
+  requestMotionPerm();
+  var sp=parseFloat($('rSpeed').textContent); imu.engCap={t0:Date.now(),data:[],startKmh:isFinite(sp)?sp:null};
+  var btn=$('engSampleBtn'); if(btn){btn.textContent='● sampling 5 s…'; btn.disabled=true;}
+  setTimeout(function(){ var cap=imu.engCap; imu.engCap=null;
+    if(btn){btn.textContent='🎙️ Engine sample (5s)'; btn.disabled=false;}
+    if(cap&&cap.data.length>10){ var dur=(Date.now()-cap.t0)/1000, rate=cap.data.length/dur;
+      rec.engSamples.push({ts:cap.t0,dur:+dur.toFixed(2),rate:+rate.toFixed(1),startKmh:cap.startKmh,data:cap.data});
+      if(rec.engSamples.length>8) rec.engSamples.shift();
+      toast('Engine sample saved — '+cap.data.length+' pts @ '+rate.toFixed(0)+' Hz'); }
+    else toast('No motion captured — try again'); },5000);
+}
 
 function stopRide(){
   openOdoModal('Odometer after ride','Enter the reading now to measure this ride by the dash. You can skip it.',
-    uLabel(),'Save ride', function(endOdo){ finishRide(endOdo); });
+    uLabel(),'Save ride',function(endOdo){finishRide(endOdo);});
 }
 function finishRide(endOdo){
-  if(geoId!=null && navigator.geolocation){navigator.geolocation.clearWatch(geoId);} geoId=null;
+  if(geoId!=null&&navigator.geolocation){navigator.geolocation.clearWatch(geoId);} geoId=null;
   window.removeEventListener('deviceorientation',onOrient,true);
   window.removeEventListener('devicemotion',onMotion,true);
+  imu.engCap=null;
   if(timer){clearInterval(timer);timer=null;}
+  if(recRainTimer){clearInterval(recRainTimer);recRainTimer=null;} setRainWarn(null);
   releaseWake();
+  autoClear(); rainHold=false; rideRotate=true; document.body.classList.remove('riding','locked'); rideLockSet(false);
+  try{ var rm=Maps['rideMap']; if(rm)rm.me.clearLayers(); }catch(e){}
   var endTs=Date.now(), durS=Math.round((endTs-rec.startTs)/1000);
-  var trip={
-    id:'t'+rec.startTs, startTs:rec.startTs, endTs:endTs, durS:durS, unit:rec.unit,
+  var trip={ id:'t'+rec.startTs, startTs:rec.startTs, endTs:endTs, durS:durS, unit:rec.unit,
     startOdo:rec.startOdo, endOdo:(endOdo==null?null:toKm(endOdo)),
     distKm:rec.distM/1000, maxSpeedKmh:rec.maxSpeed,
-    avgSpeedKmh: durS>0? (rec.distM/1000)/(durS/3600):0,
+    avgSpeedKmh: durS>0?(rec.distM/1000)/(durS/3600):0,
     maxLean:rec.maxLean, maxG:rec.maxG, altGainM:Math.round(rec.altGain),
-    track:rec.track
-  };
+    schema:9, gpsBadPts:rec.badPts||0, imuCal:(imu.fwdLock?{grav:imu.grav,fwd:imu.fwd,fwdLock:true}:((cfg.imuCal&&cfg.imuCal.grav)?{grav:cfg.imuCal.grav,fwd:cfg.imuCal.fwd||null,fwdLock:false}:null)),
+    engSamples:rec.engSamples||[], track:rec.track };
   trips.unshift(trip);
-  if(!save(LS.trips,trips)){ trips.shift(); alert('Storage full — export and delete an old ride first.'); }
-  rec=null; $('recBadge').textContent='OFFLINE · PHONE ONLY';
-  renderTrips(); openTrip(trip.id);
+  if(!save(LS.trips,trips)){ trips.shift(); toast('Storage full — save a backup and delete an old ride'); }
+  rec=null; $('recBadge').textContent='RIDE LOGGER · PHONE';
+  renderTrips(); openTrip(trip.id); toast('Ride saved ✓');
 }
-
-$('startBtn').onclick=startFlow;
-$('stopBtn').onclick=stopRide;
+$('startBtn').onclick=openPreRide;
+$('stopBtn').onclick=function(){ if(rideLocked)return; $('stopScrim').classList.add('on'); };
+$('imuCalBtn').onclick=function(){ $('calScrim').classList.add('on'); $('calS1Live').textContent=''; $('calS1').classList.toggle('done',!!(cfg.imuCal&&cfg.imuCal.grav)); $('calS2').classList.toggle('done',imu.fwdLock); $('calS2Live').textContent=imu.fwdLock?'forward axis: locked ✓':'forward axis: not set'; };
+$('calClose').onclick=function(){ $('calScrim').classList.remove('on'); gateRefreshCal(); };
+$('calCapUp').onclick=function(){ captureUpright($('calS1Live'),function(){ $('calS1').classList.add('done'); }); };
+$('calCapFwd').onclick=function(){ captureForward($('calS2Live'),function(){ $('calS2').classList.add('done'); }); };
+$('calAuto').onclick=function(){ imu.autoLearn=true; $('calS2Live').textContent='auto: forward locks on your first firm acceleration while riding'; toast('Auto-forward on'); };
+$('fwdNowBtn').onclick=function(){ captureForward(null,null); };
+$('engSampleBtn').onclick=startEngineSample;
+$('coachOk').onclick=function(){ cfg.coachDone=true; save(LS.cfg,cfg); $('rideCoach').classList.add('hide'); };
 
 /* ---------- wake lock ---------- */
-function requestWake(){
-  if(cfg.keepAwake==='off')return;
-  try{if('wakeLock' in navigator){navigator.wakeLock.request('screen').then(function(w){wakeLock=w;}).catch(function(){});}}catch(e){}
-}
+function requestWake(){ if(cfg.keepAwake==='off')return;
+  try{if('wakeLock' in navigator){navigator.wakeLock.request('screen').then(function(w){wakeLock=w;}).catch(function(){});}}catch(e){}}
 function releaseWake(){try{if(wakeLock){wakeLock.release();wakeLock=null;}}catch(e){}}
 document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible'&&rec)requestWake();});
 
@@ -444,13 +1070,10 @@ function hav(a,b,c,d){var R=6371000,t=Math.PI/180,dLat=(c-a)*t,dLon=(d-b)*t;
   return 2*R*Math.asin(Math.min(1,Math.sqrt(x)));}
 function mmss(s){var m=Math.floor(s/60),ss=s%60;return m+':'+(ss<10?'0':'')+ss;}
 function hm(s){var h=Math.floor(s/3600),m=Math.round((s%3600)/60);return h>0?(h+'h '+m+'m'):(m+'m');}
-function dateStr(ts){var d=new Date(ts);return d.toLocaleDateString([], {weekday:'short',day:'numeric',month:'short'})+' '+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});}
+function dateStr(ts){var d=new Date(ts);return d.toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
 
 /* ================= RIDES LIST ================= */
-function tripDistShown(t){
-  if(t.startOdo!=null && t.endOdo!=null && t.endOdo>=t.startOdo) return t.endOdo-t.startOdo;
-  return t.distKm;
-}
+function tripDistShown(t){ if(t.startOdo!=null&&t.endOdo!=null&&t.endOdo>=t.startOdo)return t.endOdo-t.startOdo; return t.distKm; }
 function renderTrips(){
   applyUnitLabels();
   $('sumRides').textContent=trips.length;
@@ -458,8 +1081,10 @@ function renderTrips(){
   $('sumDist').innerHTML=fmt(kmTo(totKm),totKm<100?1:0)+'<small>'+uLabel()+'</small>';
   var eco=fuelAverage();
   $('sumEco').innerHTML=(eco?fmt(kmTo(eco),1):'—')+'<small>'+uLabel()+'/L</small>';
+  $('savedHint').textContent=trips.length+' ride'+(trips.length===1?'':'s')+' saved on this phone';
+  updateTip();
   var list=$('tripList');
-  if(!trips.length){ list.innerHTML='<div class="empty">No rides yet.<br>Tap <b>Start ride</b> to record your first route, lean and speed.</div>'; return; }
+  if(!trips.length){ list.innerHTML='<div class="empty">No rides yet.<br>Tap <b>Start ride</b> to record your route, lean and speed.</div>'; return; }
   list.innerHTML='';
   trips.forEach(function(t){
     var el=document.createElement('button'); el.className='item';
@@ -471,58 +1096,301 @@ function renderTrips(){
   });
 }
 
+/* ================= MAPS (Leaflet) ================= */
+var Maps={}, liveGeo=null, liveCentered=false;
+/* Free, no-API-key basemaps (CARTO now requires a paid key). */
+var BASEMAPS={   /* v16: dropped the Esri Canvas Gray bases (they emit "Zoom Level Not Supported" over central SG). OSM + a CSS-inverted OSM 'dark' + Esri Imagery — all reliable. */
+  streets:{url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',opts:{subdomains:'abc',maxZoom:19,attribution:'© OpenStreetMap'}},
+  dark:{url:'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',opts:{subdomains:'abc',maxZoom:19,attribution:'© OpenStreetMap'},filter:'invert(1) hue-rotate(180deg) brightness(.92) contrast(.9)'}
+};   /* v16: no Esri at all — even Esri's Satellite throttles to the "Zoom Level Not Supported" placeholder on some IPs */
+function haveMaps(){return !!window.L;}
+function ensureMap(elId,infoId){
+  if(!haveMaps())return null;
+  if(Maps[elId])return Maps[elId];
+  try{
+    var map=L.map(elId,{zoomControl:true,attributionControl:true});
+    var bm=BASEMAPS[cfg.basemap]||BASEMAPS.streets;
+    var obj={map:map, info:$(infoId), cloudsOn:false, wxTime:null, temp:null};
+    obj.tile=L.tileLayer(bm.url,bm.opts).addTo(map);
+    try{ var tp0=map.getPane('tilePane'); if(tp0)tp0.style.filter=bm.filter||'none'; }catch(e){}   /* v16: dark = CSS-inverted OSM; filter on base tiles only (radar stays true-colour) */
+    map.createPane('clouds'); var cp=map.getPane('clouds');
+    cp.style.zIndex=350; cp.style.pointerEvents='none';   /* v13: no blur — radar tiles should be crisp */
+    obj.route=L.layerGroup().addTo(map); obj.clouds=L.layerGroup().addTo(map); obj.icons=L.layerGroup().addTo(map); obj.me=L.layerGroup().addTo(map);
+    Maps[elId]=obj; return obj;
+  }catch(e){ return null; }
+}
+function setBasemap(obj,key){ if(!obj||!BASEMAPS[key])return; try{ if(obj.tile)obj.map.removeLayer(obj.tile);
+  var bm=BASEMAPS[key]; obj.tile=L.tileLayer(bm.url,bm.opts).addTo(obj.map); obj.tile.bringToBack();
+  var tp=obj.map.getPane('tilePane'); if(tp)tp.style.filter=bm.filter||'none'; }catch(e){} }
+function updateBasemapSegs(){ ['tripBaseSeg','liveBaseSeg','rideBaseSeg'].forEach(function(id){ var seg=$(id); if(!seg)return;
+  [].forEach.call(seg.children,function(b){ b.classList.toggle('on', b.getAttribute('data-b')===cfg.basemap); }); }); }
+function switchBasemap(key){ if(!BASEMAPS[key])return; cfg.basemap=key; save(LS.cfg,cfg);
+  Object.keys(Maps).forEach(function(k){ setBasemap(Maps[k],key); }); updateBasemapSegs(); }
+function wireBasemapSegs(){ ['tripBaseSeg','liveBaseSeg','rideBaseSeg'].forEach(function(id){ var seg=$(id); if(!seg)return;
+  [].forEach.call(seg.children,function(b){ b.onclick=function(){ switchBasemap(b.getAttribute('data-b')); }; }); }); updateBasemapSegs(); }
+wireBasemapSegs();
+function validSegments(track){   /* v11: split the route at invalid (GPS-lost) points */
+  var segs=[],cur=[];
+  track.forEach(function(p){ if(!p[1]||!p[2])return; var v=(p.length>11)?p[11]:1;
+    if(v){cur.push([p[1],p[2]]);} else if(cur.length){segs.push(cur);cur=[];} });
+  if(cur.length)segs.push(cur); return segs;
+}
+function drawRouteOnMap(obj,track,fit){
+  obj.route.clearLayers();
+  var segs=validSegments(track), all=[];
+  segs.forEach(function(seg){ if(seg.length>=2) L.polyline(seg,{color:'#2fd27a',weight:4,opacity:.95}).addTo(obj.route);
+    seg.forEach(function(x){all.push(x);}); });
+  for(var i=1;i<segs.length;i++){ var a=segs[i-1][segs[i-1].length-1], b=segs[i][0];   /* dashed = GPS gap */
+    if(a&&b) L.polyline([a,b],{color:'#f0a73a',weight:2,opacity:.6,dashArray:'3 8'}).addTo(obj.route); }
+  if(!all.length)return false;
+  L.circleMarker(all[0],{radius:6,color:'#07140d',weight:2,fillColor:'#4aa8ff',fillOpacity:1}).addTo(obj.route);
+  L.circleMarker(all[all.length-1],{radius:6,color:'#160303',weight:2,fillColor:'#ef5a5a',fillOpacity:1}).addTo(obj.route);
+  if(fit!==false){ try{ obj.map.fitBounds(L.latLngBounds(all).pad(0.18)); }catch(e){} }
+  return true;
+}
+function wxIntensity(txt){
+  var s=(txt||'').toLowerCase();
+  if(/thunder/.test(s)) return 3;
+  if(/rain|shower|drizzle/.test(s)){
+    if(/heavy/.test(s)) return 3;
+    if(/light|passing|slight|drizzle/.test(s)) return 1;
+    return 2;
+  }
+  return 0; // fair, cloudy, partly, hazy, windy = no rain
+}
+function wxColor(v){ // 0..3 -> [r,g,b]  green -> yellow -> orange -> red
+  var st=[[46,204,113],[241,196,15],[230,126,34],[231,76,60]];
+  v=Math.max(0,Math.min(3,v)); var i=Math.floor(v); if(i>2)i=2; var f=v-i, a=st[i], b=st[i+1];
+  return [Math.round(a[0]+(b[0]-a[0])*f), Math.round(a[1]+(b[1]-a[1])*f), Math.round(a[2]+(b[2]-a[2])*f)];
+}
+function buildWxField(areas){
+  var minLa=99,maxLa=-99,minLo=999,maxLo=-999;
+  areas.forEach(function(a){ if(a.lat<minLa)minLa=a.lat; if(a.lat>maxLa)maxLa=a.lat; if(a.lng<minLo)minLo=a.lng; if(a.lng>maxLo)maxLo=a.lng; });
+  var pLa=(maxLa-minLa)*0.12+0.02, pLo=(maxLo-minLo)*0.12+0.02; minLa-=pLa; maxLa+=pLa; minLo-=pLo; maxLo+=pLo;
+  var W=90, H=Math.max(30,Math.round(W*(maxLa-minLa)/(maxLo-minLo)));
+  var c=document.createElement('canvas'); c.width=W; c.height=H;
+  var ctx=c.getContext('2d'), img=ctx.createImageData(W,H), d=img.data;
+  for(var gy=0;gy<H;gy++){ var lat=maxLa-(gy+0.5)/H*(maxLa-minLa);
+    for(var gx=0;gx<W;gx++){ var lng=minLo+(gx+0.5)/W*(maxLo-minLo), num=0,den=0;
+      for(var k=0;k<areas.length;k++){ var dla=lat-areas[k].lat, dlo=lng-areas[k].lng, w=1/(dla*dla+dlo*dlo+0.0008); num+=w*areas[k].I; den+=w; }
+      var v=den>0?num/den:0, col=wxColor(v), al=0.12+Math.min(1,v/3)*0.38, o=(gy*W+gx)*4;
+      d[o]=col[0]; d[o+1]=col[1]; d[o+2]=col[2]; d[o+3]=Math.round(al*255);
+    }
+  }
+  ctx.putImageData(img,0,0);
+  return {url:c.toDataURL(), bounds:[[minLa,minLo],[maxLa,maxLo]]};
+}
+function fetchJson(u){ return fetch(u,{cache:'no-store'}).then(function(r){ if(!r.ok)throw 0; return r.json(); }); }
+function parseForecast(j){
+  var d=j.data||j;
+  var meta=d.area_metadata||[], items=d.items||d.records||[];
+  var fc=(items[0]&&items[0].forecasts)||[];
+  var fmap={}; fc.forEach(function(f){fmap[f.area]=f.forecast;});
+  var areas=meta.filter(function(m){return m.label_location;}).map(function(m){
+    return {name:m.name,lat:m.label_location.latitude,lng:m.label_location.longitude,forecast:fmap[m.name]||''};});
+  return {areas:areas, updated:(items[0]&&(items[0].update_timestamp||items[0].timestamp))||null};
+}
+function fetchForecast(){
+  return fetchJson('https://api.data.gov.sg/v1/environment/2-hour-weather-forecast').then(parseForecast)
+    .catch(function(){ return fetchJson('https://api-open.data.gov.sg/v2/real-time/api/two-hr-forecast').then(parseForecast); });
+}
+function nearestTemp(center){
+  return fetchJson('https://api.data.gov.sg/v1/environment/air-temperature').then(function(j){
+    var d=j.data||j, st=(j.metadata&&j.metadata.stations)||d.stations||[], rd=(j.items&&j.items[0]&&j.items[0].readings)||d.readings||[];
+    var vmap={}; rd.forEach(function(r){vmap[r.station_id||r.stationId]=r.value;});
+    var best=null,bd=1e9;
+    st.forEach(function(s){var loc=s.location; if(!loc)return; var v=vmap[s.id]; if(v==null)return;
+      var dd=Math.abs(loc.latitude-center[0])+Math.abs(loc.longitude-center[1]); if(dd<bd){bd=dd;best=v;}});
+    return best;
+  }).catch(function(){return null;});
+}
+function renderWx(obj){
+  if(!obj.info)return;
+  var parts=[];
+  if(obj.wxTime) parts.push('🌧 '+obj.wxTime);
+  if(obj.temp!=null) parts.push(Math.round(obj.temp)+'°C');
+  if(parts.length){ obj.info.textContent=parts.join('  ·  '); obj.info.style.display='inline-flex'; }
+  else if(obj.cloudsOn){ obj.info.textContent='Radar needs internet'; obj.info.style.display='inline-flex'; }
+  else { obj.info.style.display='none'; }
+}
+/* ---------- v13: RainViewer real radar (replaces the NEA forecast field on the maps; NEA still drives the rain-ahead warning) ---------- */
+var rvCache={t:0,p:null};
+function rvGet(){ var now=Date.now();
+  if(rvCache.p&&(now-rvCache.t)<90000) return rvCache.p;
+  var p=fetchJson('https://api.rainviewer.com/public/weather-maps.json').then(function(j){
+    var past=(j.radar&&j.radar.past)||[], nc=(j.radar&&j.radar.nowcast)||[];
+    return {host:j.host, frames:past.concat(nc), nPast:past.length}; });
+  rvCache.p=p; rvCache.t=now; p.catch(function(){rvCache.p=null;}); return p; }
+function rvTileUrl(host,fr){ return host+fr.path+'/256/{z}/{x}/{y}/'+(cfg.radarColor||4)+'/1_1.png'; }
+function rvShow(obj,i){ if(!obj._rv||!obj._rv.frames[i])return; obj._rvIdx=i; var fr=obj._rv.frames[i];
+  var url=rvTileUrl(obj._rv.host,fr);
+  if(obj.rvLayer){ obj.rvLayer.setUrl(url); } else { obj.rvLayer=L.tileLayer(url,{pane:'clouds',opacity:0.66,crossOrigin:true}); obj.rvLayer.addTo(obj.map); }
+  var d=new Date(fr.time*1000), hhmm=d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  obj.wxTime=hhmm; renderWx(obj);
+  if(obj.rvTimeEl){ var tag=(i>=obj._rv.nPast)?' · forecast':(i===obj._rv.nPast-1?' · now':''); obj.rvTimeEl.textContent=hhmm+tag; } }
+function loadClouds(obj,center){           /* name kept so callers are unchanged; now loads RainViewer radar */
+  obj.wxTime=null; obj.temp=null;
+  if(obj.info){obj.info.textContent='Loading radar…';obj.info.style.display='inline-flex';}
+  rvGet().then(function(rv){ if(!rv.frames.length)throw 0; obj._rv=rv; rvShow(obj,Math.max(0,rv.nPast-1));
+    var c=center||(obj.map.getCenter&&[obj.map.getCenter().lat,obj.map.getCenter().lng]);
+    if(c) nearestTemp(c).then(function(v){ if(v!=null){obj.temp=v; renderWx(obj);} });
+  }).catch(function(){ if(obj.info){obj.info.textContent='Radar needs internet';obj.info.style.display='inline-flex';} }); }
+function rvStop(obj){ if(obj.rvTimer){clearInterval(obj.rvTimer);obj.rvTimer=null;} obj.rvPlaying=false; }
+function rvPlay(obj){ if(!obj._rv||!obj._rv.frames.length)return; rvStop(obj); obj.rvPlaying=true;
+  obj.rvTimer=setInterval(function(){ var n=((obj._rvIdx||0)+1); if(n>=obj._rv.frames.length)n=0; rvShow(obj,n); },700); }
+function rvToggle(obj,btn){ if(!obj||!obj._rv)return; if(obj.rvPlaying){ rvStop(obj); if(btn)btn.textContent='▶'; } else { rvPlay(obj); if(btn)btn.textContent='⏸'; } }
+function wireRadar(btnId,mapKey,timeId){ var b=$(btnId); if(!b)return;
+  b.onclick=function(){ var obj=Maps[mapKey]; if(obj&&obj._rv){ obj.rvTimeEl=$(timeId); rvToggle(obj,b); } }; }
+function toggleClouds(obj,center,btn){
+  obj.cloudsOn=!obj.cloudsOn;
+  if(btn)btn.textContent=(obj.cloudsOn?'🌧 Radar: on':'🌧 Radar: off');
+  if(obj.cloudsOn){ loadClouds(obj,center); }
+  else { rvStop(obj); if(obj.rvLayer){try{obj.map.removeLayer(obj.rvLayer);}catch(e){}obj.rvLayer=null;} obj._rv=null; obj.clouds.clearLayers(); obj.wxTime=null; obj.temp=null; renderWx(obj); }
+}
+
+/* ================= RAIN WARNING ================= */
+/* A web page cannot read your Google Maps route (iOS sandbox forbids it). Instead this
+   watches your GPS position + direction of travel and checks NEA rain areas ahead. */
+var wxCache={t:0,p:null};
+function getForecast(){ var now=Date.now();
+  if(wxCache.p&&(now-wxCache.t)<120000) return wxCache.p;
+  var p=fetchForecast(); wxCache.p=p; wxCache.t=now; p.catch(function(){wxCache.p=null;}); return p; }
+function isRain(f){ return /rain|shower|thunder|drizzle/i.test(f||''); }
+function nearestArea(areas,lat,lng){ var best=null,bd=1e9; areas.forEach(function(a){var d=Math.abs(a.lat-lat)+Math.abs(a.lng-lng); if(d<bd){bd=d;best=a;}}); return best; }
+function destPoint(lat,lng,brg,km){ var th=brg*Math.PI/180; var dLat=(km*Math.cos(th))/111.32; var dLng=(km*Math.sin(th))/(111.32*Math.cos(lat*Math.PI/180)); return [lat+dLat,lng+dLng]; }
+function bearing(a,b){ var la1=a[0]*Math.PI/180,la2=b[0]*Math.PI/180,dLo=(b[1]-a[1])*Math.PI/180;
+  var y=Math.sin(dLo)*Math.cos(la2), x=Math.cos(la1)*Math.sin(la2)-Math.sin(la1)*Math.cos(la2)*Math.cos(dLo);
+  return (Math.atan2(y,x)*180/Math.PI+360)%360; }
+function evalRain(pos,brg){
+  return getForecast().then(function(fc){
+    if(!fc||!fc.areas.length) return null;
+    var h=nearestArea(fc.areas,pos[0],pos[1]); if(h&&isRain(h.forecast)) return {level:'here',area:h.name,km:0};
+    if(brg!=null){ var ds=[1,2,3,4,6]; for(var i=0;i<ds.length;i++){ var pt=destPoint(pos[0],pos[1],brg,ds[i]); var a=nearestArea(fc.areas,pt[0],pt[1]); if(a&&isRain(a.forecast)) return {level:'ahead',area:a.name,km:ds[i]}; } }
+    return {level:'clear'};
+  }).catch(function(){return null;});
+}
+function applyRain(r){ if(r&&(r.level==='here'||r.level==='ahead'))setRainWarn(r); else if(r&&r.level==='clear')setRainWarn(null); }
+function setRainWarn(r){
+  var el=$('rainWarn');
+  if(r&&(r.level==='here'||r.level==='ahead')){
+    el.innerHTML='🧥 <b>Put your raincoat on.</b> <span>'+(r.level==='here'?('Rain where you are ('+r.area+').'):('Rain ~'+r.km+' km ahead, near '+r.area+'.'))+'</span><button id="rainX">Dismiss</button>';
+    el.classList.remove('hide'); el.classList.add('on');
+    $('rainX').onclick=function(){ el.classList.add('hide'); el.classList.remove('on'); rainMutedUntil=Date.now()+900000; rainHold=false; rotTick(); };
+    beep();
+    if(rec){ rainHold=true; rideWxRefresh(); rotTick(); }   /* v12: swing to the Weather map and hold it while the warning is up */
+  } else { el.classList.add('hide'); el.classList.remove('on'); if(rainHold){ rainHold=false; rotTick(); } }
+}
+function beep(){ try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); var o=actx.createOscillator(),g=actx.createGain();
+  o.connect(g);g.connect(actx.destination);o.type='sine';o.frequency.value=880;g.gain.value=0.0001;
+  o.start(); g.gain.exponentialRampToValueAtTime(0.28,actx.currentTime+0.02); g.gain.exponentialRampToValueAtTime(0.0001,actx.currentTime+0.55); o.stop(actx.currentTime+0.57);
+}catch(e){} }
+function recRainCheck(){ if(!rec||!navigator.onLine||rec.lastLat==null)return;
+  rideWxRefresh();                                    /* keep the Weather map current for the glance */
+  if(cfg.rainAlerts==='off')return; if(Date.now()<rainMutedUntil)return;
+  evalRain([rec.lastLat,rec.lastLon], rec.brg!=null?rec.brg:null).then(applyRain); }
+
 /* ================= TRIP DETAIL ================= */
 var curTrip=null;
+function trackCenter(track){ var p=track.filter(function(x){return x[1]&&x[2];}); return p.length?[p[0][1],p[0][2]]:null; }
 function openTrip(id){
   curTrip=trips.filter(function(t){return t.id===id;})[0]; if(!curTrip)return;
   var t=curTrip;
   $('tripTitle').textContent='Ride · '+fmt(kmTo(tripDistShown(t)),1)+' '+uLabel();
-  $('tripWhen').textContent=dateStr(t.startTs)+'  —  '+new Date(t.endTs).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-  drawRoute(t.track);
+  $('tripWhen').textContent=dateStr(t.startTs)+'  —  '+new Date(t.endTs).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  drawRoute('route',t.track);
   var odoDist=(t.startOdo!=null&&t.endOdo!=null&&t.endOdo>=t.startOdo)?(t.endOdo-t.startOdo):null;
-  var cells=[
-    ['Duration',hm(t.durS),''],
-    ['Dist (GPS)',fmt(kmTo(t.distKm),1),uLabel()],
+  var cells=[['Duration',hm(t.durS),''],['Dist (GPS)',fmt(kmTo(t.distKm),1),uLabel()],
     ['Dist (odo)',odoDist!=null?fmt(kmTo(odoDist),1):'—',uLabel()],
     ['Avg speed',fmt(spd(t.avgSpeedKmh)),cfg.unit==='mi'?'mph':'km/h'],
     ['Max speed',fmt(spd(t.maxSpeedKmh)),cfg.unit==='mi'?'mph':'km/h'],
-    ['Max lean',fmt(t.maxLean),'°'],
-    ['Max g',fmt(t.maxG,1),'g'],
-    ['Climb',fmt(t.altGainM),'m'],
-    ['Points',t.track.length,'']
-  ];
-  $('tripStats').innerHTML=cells.map(function(c){
-    return '<div class="cell"><div class="k">'+c[0]+'</div><div class="v">'+c[1]+(c[2]?'<small>'+c[2]+'</small>':'')+'</div></div>';
-  }).join('');
-  drawLine('chartSpeed', t.track, function(p){return spd(p[3]);}, '#2fd27a', false);
-  drawLine('chartLean', t.track, function(p){return p[4];}, '#4aa8ff', true);
+    ['Max lean',fmt(t.maxLean),'°'],['Max g',fmt(t.maxG,1),'g'],
+    ['Climb',fmt(t.altGainM),'m'],['Points',t.track.length,'']];
+  var hasImu=!!(t.track.length&&t.track[0].length>6);
+  if(hasImu){ var mAcc=0,mBr=0,mLat=0;
+    t.track.forEach(function(p){ var gl=p[6]||0,gla=p[7]||0; if(gl>mAcc)mAcc=gl; if(-gl>mBr)mBr=-gl; if(Math.abs(gla)>mLat)mLat=Math.abs(gla); });
+    cells.push(['Max accel',fmt(mAcc,2),'g'],['Max brake',fmt(mBr,2),'g'],['Max corner',fmt(mLat,2),'g']); }
+  $('tripStats').innerHTML=cells.map(function(c){return '<div class="cell"><div class="k">'+c[0]+'</div><div class="v">'+c[1]+(c[2]?'<small>'+c[2]+'</small>':'')+'</div></div>';}).join('');
+  drawLine('chartSpeed',t.track,function(p){return spd(p[3]);},'#2fd27a',false);
+  drawLine('chartLean',t.track,function(p){return p[4];},'#4aa8ff',true);
+  if(hasImu){ $('longWrap').classList.remove('hide'); $('latWrap').classList.remove('hide'); $('imuNote').classList.remove('hide');
+    drawLine('chartLong',t.track,function(p){return p[6]||0;},'#f0a73a',true);
+    drawLine('chartLat',t.track,function(p){return p[7]||0;},'#b07cff',true);
+    var es=(t.engSamples&&t.engSamples.length)||0;
+    $('imuNote').textContent='IMU captured · '+((t.imuCal&&t.imuCal.fwdLock)?'forward locked':'forward not locked')+(es?(' · '+es+' engine sample'+(es===1?'':'s')):'');
+  } else { $('longWrap').classList.add('hide'); $('latWrap').classList.add('hide'); $('imuNote').classList.add('hide'); }
+  renderInsights(t);
   show('scr-trip');
+
+  var obj=ensureMap('tripMap','tripWx');
+  var hasGps=t.track.filter(function(p){return p[1]&&p[2];}).length>=1;
+  if(obj&&hasGps){
+    $('tripMapWrap').classList.remove('hide'); $('route').classList.add('hide');
+    $('tripWxBtn').classList.remove('hide'); $('tripWxHint').classList.remove('hide');
+    obj.cloudsOn=false; obj.clouds.clearLayers(); obj.wxTime=null; obj.temp=null; renderWx(obj);
+    $('tripWxBtn').textContent='🌧 Radar: off';
+    setTimeout(function(){ try{obj.map.invalidateSize();}catch(e){} drawRouteOnMap(obj,t.track); },80);
+  }else{
+    $('tripMapWrap').classList.add('hide'); $('route').classList.remove('hide');
+    $('tripWxBtn').classList.add('hide'); $('tripWxHint').classList.add('hide');
+  }
 }
 $('tripBack').onclick=function(){show('scr-trips');renderTrips();};
+$('tripWxBtn').onclick=function(){ var obj=Maps['tripMap']; if(obj)toggleClouds(obj,curTrip?trackCenter(curTrip.track):null,$('tripWxBtn')); };
 $('delTrip').onclick=function(){
   if(!curTrip)return;
+  if($('delTrip').textContent.indexOf('Sure')<0){ $('delTrip').textContent='Sure? Tap again to delete'; setTimeout(function(){$('delTrip').textContent='Delete this ride';},2600); return; }
   trips=trips.filter(function(t){return t.id!==curTrip.id;});
-  save(LS.trips,trips); show('scr-trips'); renderTrips();
+  save(LS.trips,trips); $('delTrip').textContent='Delete this ride'; show('scr-trips'); renderTrips(); toast('Ride deleted');
 };
 
-function drawRoute(track){
-  var svg=$('route'); svg.innerHTML='';
+/* ================= LIVE MAP ================= */
+$('liveMapBtn').onclick=openLiveMap;
+$('mapBack').onclick=function(){show('scr-trips');renderTrips();};
+function openLiveMap(){
+  show('scr-map');
+  var obj=ensureMap('liveMap','liveWx');
+  if(!obj){ $('mapMsg').classList.remove('hide'); return; }
+  obj.rvTimeEl=$('liveRadarTime');
+  $('mapMsg').classList.add('hide'); liveCentered=false;
+  setTimeout(function(){ try{obj.map.invalidateSize();}catch(e){} try{obj.map.setView([1.3521,103.8198],11);}catch(e){} },80);
+  if(!obj.cloudsOn){ toggleClouds(obj,[1.3521,103.8198],$('liveWxBtn')); } else { $('liveWxBtn').textContent='🌧 Radar: on'; loadClouds(obj,[1.3521,103.8198]); }
+  if(navigator.geolocation){
+    liveGeo=navigator.geolocation.watchPosition(function(p){
+      var ll=[p.coords.latitude,p.coords.longitude];
+      obj.me.clearLayers();
+      L.circleMarker(ll,{radius:8,color:'#04120a',weight:3,fillColor:'#2fd27a',fillOpacity:1}).addTo(obj.me);
+      var now=Date.now();
+      if(now-lastRainChk>45000 && navigator.onLine && now>rainMutedUntil){ lastRainChk=now; var brg=prevLive?bearing(prevLive,ll):null; evalRain(ll,brg).then(applyRain); }
+      prevLive=ll;
+      if(!liveCentered){ try{obj.map.setView(ll,14);}catch(e){} liveCentered=true; if(obj.cloudsOn)nearestTemp(ll).then(function(v){if(v!=null){obj.temp=v;renderWx(obj);}}); }
+    },function(){},{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
+  }
+}
+$('liveWxBtn').onclick=function(){ var obj=Maps['liveMap']; if(obj)toggleClouds(obj,liveCentered?[obj.map.getCenter().lat,obj.map.getCenter().lng]:[1.3521,103.8198],$('liveWxBtn')); };
+$('liveRefresh').onclick=function(){ var obj=Maps['liveMap']; if(obj&&obj.cloudsOn){loadClouds(obj,[obj.map.getCenter().lat,obj.map.getCenter().lng]);toast('Radar refreshed');} };
+wireRadar('rideRadarPlay','rideMap','rideRadarTime'); wireRadar('liveRadarPlay','liveMap','liveRadarTime');
+
+/* ---------- SVG route + charts (offline fallback) ---------- */
+function drawRoute(svgId,track){
+  var svg=$(svgId); if(!svg)return; svg.innerHTML='';
   var pts=track.filter(function(p){return p[1]&&p[2];});
-  if(pts.length<2){ svg.innerHTML='<text x="170" y="100" fill="#5c6572" font-size="12" text-anchor="middle" font-family="sans-serif">No GPS track for this ride</text>'; return; }
-  var W=340,H=200,pad=16;
-  var lat0=pts[0][1]*Math.PI/180;
-  var xs=pts.map(function(p){return p[2]*Math.cos(lat0);}), ys=pts.map(function(p){return p[1];});
+  var basis=pts.filter(function(p){return (p.length>11)?p[11]:1;}); if(basis.length<2)basis=pts;  /* scale from valid pts */
+  if(basis.length<2){ svg.innerHTML='<text x="170" y="86" fill="#5c6572" font-size="12" text-anchor="middle" font-family="sans-serif">'+(pts.length?'Recording…':'No GPS track yet')+'</text>'; return; }
+  var vb=svg.getAttribute('viewBox').split(' '), W=+vb[2], H=+vb[3], pad=16;
+  var lat0=basis[0][1]*Math.PI/180, cos=Math.cos(lat0);
+  var xs=basis.map(function(p){return p[2]*cos;}), ys=basis.map(function(p){return p[1];});
   var minX=Math.min.apply(null,xs),maxX=Math.max.apply(null,xs),minY=Math.min.apply(null,ys),maxY=Math.max.apply(null,ys);
   var dx=(maxX-minX)||1e-6, dy=(maxY-minY)||1e-6, sc=Math.min((W-2*pad)/dx,(H-2*pad)/dy);
-  var ox=(W-dx*sc)/2, oy=(H-dy*sc)/2;
-  function X(i){return ox+(xs[i]-minX)*sc;} function Y(i){return H-(oy+(ys[i]-minY)*sc);}
-  var d=''; for(var i=0;i<pts.length;i++){d+=(i?'L':'M')+X(i).toFixed(1)+' '+Y(i).toFixed(1)+' ';}
-  var ns='http://www.w3.org/2000/svg';
+  var ox=(W-dx*sc)/2, oy=(H-dy*sc)/2, ns='http://www.w3.org/2000/svg';
+  function PX(p){return ox+(p[2]*cos-minX)*sc;} function PY(p){return H-(oy+(p[1]-minY)*sc);}
+  var d='', prev=false;
+  for(var i=0;i<pts.length;i++){ var v=(pts[i].length>11)?pts[i][11]:1;
+    if(v){ d+=(prev?'L':'M')+PX(pts[i]).toFixed(1)+' '+PY(pts[i]).toFixed(1)+' '; prev=true; } else prev=false; }
   var path=document.createElementNS(ns,'path'); path.setAttribute('d',d);
   path.setAttribute('fill','none'); path.setAttribute('stroke','#2fd27a'); path.setAttribute('stroke-width','2.5');
   path.setAttribute('stroke-linejoin','round'); path.setAttribute('stroke-linecap','round'); svg.appendChild(path);
-  [['#4aa8ff',0],['#ef5a5a',pts.length-1]].forEach(function(c){
-    var cc=document.createElementNS(ns,'circle'); cc.setAttribute('cx',X(c[1])); cc.setAttribute('cy',Y(c[1]));
+  [['#4aa8ff',basis[0]],['#ef5a5a',basis[basis.length-1]]].forEach(function(c){
+    var cc=document.createElementNS(ns,'circle'); cc.setAttribute('cx',PX(c[1]).toFixed(1)); cc.setAttribute('cy',PY(c[1]).toFixed(1));
     cc.setAttribute('r','4'); cc.setAttribute('fill',c[0]); svg.appendChild(cc);
   });
 }
@@ -531,8 +1399,7 @@ function drawLine(id,track,fn,color,symmetric){
   if(track.length<2){svg.innerHTML='<text x="170" y="58" fill="#5c6572" font-size="11" text-anchor="middle" font-family="sans-serif">no data</text>';return;}
   var vals=track.map(fn), t0=track[0][0], t1=track[track.length-1][0]||1;
   var mn=Math.min.apply(null,vals), mx=Math.max.apply(null,vals);
-  if(symmetric){var m=Math.max(Math.abs(mn),Math.abs(mx),5); mn=-m; mx=m;}
-  else { mn=Math.min(0,mn); mx=mx||1; }
+  if(symmetric){var m=Math.max(Math.abs(mn),Math.abs(mx),5); mn=-m; mx=m;} else { mn=Math.min(0,mn); mx=mx||1; }
   var dv=(mx-mn)||1, dt=(t1-t0)||1, ns='http://www.w3.org/2000/svg';
   function X(t){return pad+(t-t0)/dt*(W-2*pad);} function Y(v){return H-pad-(v-mn)/dv*(H-2*pad);}
   if(symmetric){var z=document.createElementNS(ns,'line');z.setAttribute('x1',pad);z.setAttribute('x2',W-pad);
@@ -548,132 +1415,705 @@ function drawLine(id,track,fn,color,symmetric){
 /* ================= EXPORT ================= */
 function tripGPX(t){
   var head='<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="RideLogger" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>Ride '+new Date(t.startTs).toISOString()+'</name><trkseg>\n';
-  var body=t.track.filter(function(p){return p[1]&&p[2];}).map(function(p){
-    var iso=new Date(t.startTs+p[0]*1000).toISOString();
-    var ele=p[5]!=null?('<ele>'+p[5]+'</ele>'):'';
+  var body=t.track.filter(function(p){return p[1]&&p[2]&&((p.length>11)?p[11]:1);}).map(function(p){
+    var iso=new Date(t.startTs+p[0]*1000).toISOString(); var ele=p[5]!=null?('<ele>'+p[5]+'</ele>'):'';
     return '<trkpt lat="'+p[1]+'" lon="'+p[2]+'">'+ele+'<time>'+iso+'</time></trkpt>';
   }).join('\n');
   return head+body+'\n</trkseg></trk></gpx>';
 }
 function tripCSV(t){
-  var rows=['t_s,lat,lon,speed_kmh,lean_deg,alt_m'];
-  t.track.forEach(function(p){rows.push([p[0],p[1],p[2],p[3],p[4],p[5]==null?'':p[5]].join(','));});
+  var rows=['t_s,lat,lon,speed_kmh,lean_deg,alt_m,glong_g,glat_g,yaw_dps,vibe,gps_acc_m,valid'];
+  t.track.forEach(function(p){rows.push([p[0],p[1],p[2],p[3],p[4],p[5]==null?'':p[5],
+    p[6]==null?'':p[6],p[7]==null?'':p[7],p[8]==null?'':p[8],p[9]==null?'':p[9],
+    p.length>10?p[10]:'',p.length>11?p[11]:''].join(','));});
   var meta='# Ride '+new Date(t.startTs).toISOString()+'\n# duration_s='+t.durS+' dist_gps_km='+t.distKm.toFixed(3)+
     ' start_odo_km='+(t.startOdo==null?'':t.startOdo)+' end_odo_km='+(t.endOdo==null?'':t.endOdo)+
-    ' max_speed_kmh='+t.maxSpeedKmh.toFixed(1)+' max_lean_deg='+t.maxLean.toFixed(1)+' max_g='+t.maxG.toFixed(2)+'\n';
+    ' max_speed_kmh='+t.maxSpeedKmh.toFixed(1)+' max_lean_deg='+t.maxLean.toFixed(1)+' max_g='+t.maxG.toFixed(2)+
+    ' schema='+(t.schema||8)+' gps_bad_pts='+(t.gpsBadPts||0)+
+    (t.imuCal?(' imu_fwd_locked='+(t.imuCal.fwdLock?1:0)):'')+'\n';
+  (t.engSamples||[]).forEach(function(es,ix){
+    meta+='# engine_sample '+(ix+1)+' ts='+es.ts+' rate_hz='+es.rate+' start_kmh='+(es.startKmh==null?'':es.startKmh)+' n='+es.data.length+'\n';
+    meta+='# es'+(ix+1)+'_vib='+es.data.join(' ')+'\n'; });
   return meta+rows.join('\n');
 }
-function shareOrShow(filename,mime,text,title){
-  try{
-    if(navigator.canShare){
-      var file=new File([text],filename,{type:mime});
-      if(navigator.canShare({files:[file]})){ navigator.share({files:[file],title:title}).catch(function(){}); return; }
-    }
-  }catch(e){}
-  $('m2Title').textContent=title; $('m2Text').value=text; $('scrim2').classList.add('on');
-  $('m2Text').focus(); $('m2Text').select();
+function saveFile(filename,mime,text,title){
+  try{ if(navigator.canShare){ var file=new File([text],filename,{type:mime});
+    if(navigator.canShare({files:[file]})){ navigator.share({files:[file],title:title}).then(function(){}).catch(function(){}); return; } } }catch(e){}
+  try{ var blob=new Blob([text],{type:mime}); var url=URL.createObjectURL(blob);
+    var a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click();
+    setTimeout(function(){URL.revokeObjectURL(url);a.remove();},1500); toast('Saved ✓'); return; }catch(e){}
+  showText(title,text);
 }
-$('shareGpx').onclick=function(){ if(curTrip) shareOrShow('ride-'+curTrip.id+'.gpx','application/gpx+xml',tripGPX(curTrip),'Ride GPX'); };
-$('copyCsv').onclick=function(){ if(curTrip) shareOrShow('ride-'+curTrip.id+'.csv','text/csv',tripCSV(curTrip),'Ride CSV'); };
-$('m2Copy').onclick=function(){ $('m2Text').select(); try{document.execCommand('copy');}catch(e){} try{navigator.clipboard.writeText($('m2Text').value).catch(function(){});}catch(e){} $('m2Copy').textContent='Copied ✓'; setTimeout(function(){$('m2Copy').textContent='Copy';},1200); };
+function showText(title,text){ $('m2Title').textContent=title; $('m2Sub').textContent='Select all, copy, and keep it safe (Notes or Mail).';
+  $('m2Text').value=text; $('m2Text').setAttribute('readonly',''); $('scrim2').classList.add('on'); wireCopyBack(); $('m2Text').focus(); $('m2Text').select(); }
+$('shareGpx').onclick=function(){ if(curTrip)saveFile('ride-'+curTrip.id+'.gpx','application/gpx+xml',tripGPX(curTrip),'Ride GPX'); };
+$('copyCsv').onclick=function(){ if(curTrip)saveFile('ride-'+curTrip.id+'.csv','text/csv',tripCSV(curTrip),'Ride CSV'); };
+function wireCopyBack(){ $('m2Copy').textContent='Copy'; $('m2Copy').onclick=function(){ $('m2Text').select(); try{document.execCommand('copy');}catch(e){} try{navigator.clipboard.writeText($('m2Text').value).catch(function(){});}catch(e){} $('m2Copy').textContent='Copied ✓'; setTimeout(function(){$('m2Copy').textContent='Copy';},1200); }; }
 $('m2Close').onclick=function(){ $('scrim2').classList.remove('on'); };
 
-$('backupBtn').onclick=function(){
-  var data={v:2,exported:new Date().toISOString(),cfg:cfg,trips:trips,fuel:fuel};
-  shareOrShow('ridelog-backup.json','application/json',JSON.stringify(data),'Ride Log backup');
+/* ================= BACKUP / RESTORE ================= */
+function backupData(){ return {app:'FBN3086K',v:4,exported:new Date().toISOString(),cfg:cfg,trips:trips,fuel:fuel}; }
+function doSaveBackup(){
+  var txt=JSON.stringify(backupData());
+  var name='FBN3086K-rides-'+new Date().toISOString().slice(0,10)+'.json';
+  cfg.lastBackup=Date.now(); save(LS.cfg,cfg); refreshBackup();
+  saveFile(name,'application/json',txt,'FBN 3086K ride backup');
+}
+function mergeById(dst,src){ var have={}; dst.forEach(function(x){if(x&&x.id)have[x.id]=1;});
+  var n=0; (src||[]).forEach(function(x){ if(x&&x.id&&!have[x.id]){dst.push(x);have[x.id]=1;n++;} }); return n; }
+function importBackup(txt){
+  var d; try{ d=JSON.parse(txt); }catch(e){ toast('That file is not a backup'); return; }
+  if(!d||(!d.trips&&!d.fuel)){ toast('That file is not a backup'); return; }
+  var addT=mergeById(trips,d.trips); var addF=mergeById(fuel,d.fuel);
+  trips.sort(function(a,b){return b.startTs-a.startTs;});
+  save(LS.trips,trips); save(LS.fuel,fuel);
+  if(d.cfg&&d.cfg.lastGrade){cfg.lastGrade=d.cfg.lastGrade;save(LS.cfg,cfg);try{$('fuelGrade').value=cfg.lastGrade;}catch(e){}}
+  renderTrips(); renderFuel(); refreshBackup();
+  toast('Restored ✓ added '+addT+' ride'+(addT===1?'':'s')+(addF?(', '+addF+' fill-up'+(addF===1?'':'s')):''));
+}
+$('saveBtn2').onclick=doSaveBackup;
+$('restoreBtn2').onclick=function(){ $('restoreFile').click(); };
+$('restoreFile').onchange=function(ev){
+  var f=ev.target.files&&ev.target.files[0]; if(!f)return;
+  var rd=new FileReader(); rd.onload=function(){ importBackup(String(rd.result)); ev.target.value=''; };
+  rd.onerror=function(){ toast('Could not read that file'); ev.target.value=''; }; rd.readAsText(f);
 };
-$('restoreBtn').onclick=function(){
-  $('m2Title').textContent='Restore'; $('m2Text').value=''; $('m2Text').removeAttribute('readonly');
-  $('m2Text').placeholder='Paste a backup JSON here, then tap Restore.';
-  $('scrim2').classList.add('on');
-  $('m2Copy').textContent='Restore';
-  $('m2Copy').onclick=function(){
-    try{var d=JSON.parse($('m2Text').value);
-      if(d.trips)trips=d.trips; if(d.fuel)fuel=d.fuel; if(d.cfg)cfg=d.cfg;
-      save(LS.trips,trips);save(LS.fuel,fuel);save(LS.cfg,cfg);
-      $('scrim2').classList.remove('on'); $('m2Text').setAttribute('readonly','');
-      $('m2Copy').textContent='Copy'; wireCopyBack();
-      renderTrips();renderFuel(); alert('Restored.');
-    }catch(e){alert('That did not look like a backup file.');}
-  };
+$('copyTextBtn').onclick=function(){ showText('Backup text',JSON.stringify(backupData())); cfg.lastBackup=Date.now(); save(LS.cfg,cfg); refreshBackup(); };
+$('pasteTextBtn').onclick=function(){
+  $('m2Title').textContent='Paste backup text'; $('m2Sub').textContent='Paste the backup text below, then tap Restore.';
+  $('m2Text').value=''; $('m2Text').removeAttribute('readonly'); $('m2Text').placeholder='Paste here…';
+  $('scrim2').classList.add('on'); $('m2Copy').textContent='Restore';
+  $('m2Copy').onclick=function(){ importBackup($('m2Text').value); $('scrim2').classList.remove('on'); $('m2Text').setAttribute('readonly',''); };
+  $('m2Text').focus();
 };
-function wireCopyBack(){ $('m2Copy').onclick=function(){ $('m2Text').select(); try{document.execCommand('copy');}catch(e){} $('m2Copy').textContent='Copied ✓'; setTimeout(function(){$('m2Copy').textContent='Copy';},1200); }; }
+function refreshBackup(){
+  $('autoSaveLine').textContent='✓ '+trips.length+' ride'+(trips.length===1?'':'s')+' and '+fuel.length+' fill-up'+(fuel.length===1?'':'s')+' saved on this phone.';
+  if(cfg.lastBackup){ $('lastBackupLine').textContent='Last backup: '+dateStr(cfg.lastBackup); }
+  else { $('lastBackupLine').textContent='Not backed up yet'; }
+  var standalone=(window.navigator.standalone===true)||(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches);
+  $('homeTip').classList.toggle('hide',!!standalone);
+}
+function updateTip(){
+  var standalone=(window.navigator.standalone===true)||(window.matchMedia&&window.matchMedia('(display-mode: standalone)').matches);
+  var show=trips.length>0 && !cfg.tipDismiss && (!cfg.lastBackup || !standalone);
+  $('tipBanner').classList.toggle('hide',!show);
+}
+$('tipGoBackup').onclick=function(){ show('scr-backup'); refreshBackup(); };
+$('tipDismiss').onclick=function(){ cfg.tipDismiss=true; save(LS.cfg,cfg); updateTip(); };
 
 /* ================= FUEL ================= */
 function fuelSorted(){ return fuel.slice().sort(function(a,b){return a.odoKm-b.odoKm;}); }
-function fullIntervals(){ // accurate full-tank -> full-tank intervals
-  var s=fuelSorted(), fi=[];
-  for(var i=0;i<s.length;i++){ if(s[i].full) fi.push(i); }
-  var ivs=[];
-  for(var k=1;k<fi.length;k++){ var a=fi[k-1], b=fi[k], dist=s[b].odoKm-s[a].odoKm, lit=0;
-    for(var j=a+1;j<=b;j++){ lit+=(s[j].litres||0); }
-    if(dist>0 && lit>0) ivs.push({dist:dist,lit:lit});
-  }
-  return ivs;
-}
-function fuelAverage(){ // km per litre
-  var ivs=fullIntervals();
+function fullIntervals(){ var s=fuelSorted(), fi=[]; for(var i=0;i<s.length;i++){ if(s[i].full)fi.push(i); }
+  var ivs=[]; for(var k=1;k<fi.length;k++){ var a=fi[k-1],b=fi[k],dist=s[b].odoKm-s[a].odoKm,lit=0;
+    for(var j=a+1;j<=b;j++){lit+=(s[j].litres||0);} if(dist>0&&lit>0)ivs.push({dist:dist,lit:lit}); } return ivs; }
+function fuelAverage(){ var ivs=fullIntervals();
   if(ivs.length){ var d=0,l=0; ivs.forEach(function(x){d+=x.dist;l+=x.lit;}); return l>0?d/l:null; }
-  var s=fuelSorted(); if(s.length<2)return null;
-  var dist=0,lit=0;
-  for(var i=1;i<s.length;i++){ var dd=s[i].odoKm-s[i-1].odoKm; if(dd>0 && s[i].litres>0){ dist+=dd; lit+=s[i].litres; } }
-  return lit>0? dist/lit : null;
-}
-function fuelLast(){
-  var ivs=fullIntervals();
-  if(ivs.length){ var x=ivs[ivs.length-1]; return x.dist/x.lit; }
-  var s=fuelSorted();
-  if(s.length>=2){ var a=s[s.length-2],b=s[s.length-1],dd=b.odoKm-a.odoKm; if(dd>0&&b.litres>0)return dd/b.litres; }
-  return null;
-}
+  var s=fuelSorted(); if(s.length<2)return null; var dist=0,lit=0;
+  for(var i=1;i<s.length;i++){ var dd=s[i].odoKm-s[i-1].odoKm; if(dd>0&&s[i].litres>0){dist+=dd;lit+=s[i].litres;} } return lit>0?dist/lit:null; }
+function fuelLast(){ var ivs=fullIntervals(); if(ivs.length){ var x=ivs[ivs.length-1]; return x.dist/x.lit; }
+  var s=fuelSorted(); if(s.length>=2){ var a=s[s.length-2],b=s[s.length-1],dd=b.odoKm-a.odoKm; if(dd>0&&b.litres>0)return dd/b.litres; } return null; }
 function renderFuel(){
   applyUnitLabels();
   var last=fuelLast(), avg=fuelAverage();
   $('fLast').innerHTML=(last?fmt(kmTo(last),1):'—')+'<small>'+uLabel()+'/L</small>';
   $('fAvg').innerHTML=(avg?fmt(kmTo(avg),1):'—')+'<small>'+uLabel()+'/L</small>';
-  $('fL100').textContent=avg? fmt(100/kmTo(avg),1) : '—';
+  $('fL100').textContent=avg?fmt(100/kmTo(avg),1):'—';
   var list=$('fuelList');
   if(!fuel.length){ list.innerHTML='<div class="empty">No fill-ups yet.<br>Add one each time you refuel to track economy.</div>'; return; }
   list.innerHTML='';
   var byOdo=fuelSorted();
   fuel.slice().sort(function(a,b){return b.ts-a.ts;}).forEach(function(f){
     var idx=byOdo.indexOf(f), prev=idx>0?byOdo[idx-1]:null;
-    var eco=(prev && f.odoKm>prev.odoKm && f.litres>0)? (f.odoKm-prev.odoKm)/f.litres : null;
-    var tags=(f.full?' · full':'')+(f.grade?(' · '+f.grade):'');
+    var eco=(prev&&f.odoKm>prev.odoKm&&f.litres>0)?(f.odoKm-prev.odoKm)/f.litres:null;
     var el=document.createElement('div'); el.className='item';
-    el.innerHTML='<div class="main"><div class="t">'+fmt(kmTo(f.odoKm),0)+' '+uLabel()+' · '+fmt(f.litres,2)+' L'+(f.full?' <span class="pill">full</span>':'')+'</div>'+
+    el.innerHTML=(f.photo?('<img class="fuelthumb" src="'+f.photo+'" alt="pump">'):'')+
+      '<div class="main"><div class="t">'+fmt(kmTo(f.odoKm),0)+' '+uLabel()+' · '+fmt(f.litres,2)+' L'+(f.full?' <span class="pill">full</span>':'')+(f.lat?' <span class="geo">📍</span>':'')+'</div>'+
       '<div class="d">'+dateStr(f.ts)+(f.grade?(' · '+f.grade):'')+(f.price?(' · $'+fmt(f.price,2)):'')+'</div></div>'+
       '<div class="r"><b>'+(eco?fmt(kmTo(eco),1):'—')+'</b><span>'+uLabel()+'/L</span></div>';
-    var del=document.createElement('button'); del.className='btn danger'; del.style.flex='0'; del.style.padding='8px 10px'; del.textContent='✕';
-    del.onclick=function(){ fuel=fuel.filter(function(x){return x.id!==f.id;}); save(LS.fuel,fuel); renderFuel(); renderTrips(); };
+    var del=document.createElement('button'); del.className='btn danger'; del.style.flex='0'; del.style.minWidth='46px'; del.style.padding='8px 10px'; del.textContent='✕';
+    del.onclick=function(){ fuel=fuel.filter(function(x){return x.id!==f.id;}); save(LS.fuel,fuel); renderFuel(); renderTrips(); toast('Fill-up deleted'); };
     el.appendChild(del); list.appendChild(el);
   });
 }
 $('fuelAdd').onclick=function(){
   var odo=parseFloat($('fuelOdo').value), lit=parseFloat($('fuelLit').value), pr=parseFloat($('fuelPrice').value);
-  if(!(odo>0)){ $('fuelOdo').focus(); return; }
-  if(!(lit>0)){ $('fuelLit').focus(); return; }
+  if(!(odo>0)){ $('fuelOdo').focus(); toast('Enter the odometer number'); return; }
+  if(!(lit>0)){ $('fuelLit').focus(); toast('Enter the litres'); return; }
   var grade=$('fuelGrade').value, full=$('fuelFull').checked;
-  fuel.push({id:'f'+Date.now(), ts:Date.now(), odoKm:toKm(odo), litres:lit, price:isFinite(pr)?pr:null, unit:cfg.unit, grade:grade, full:full});
-  save(LS.fuel,fuel);
-  cfg.lastGrade=grade; save(LS.cfg,cfg);
+  fuel.push({id:'f'+Date.now(),ts:Date.now(),odoKm:toKm(odo),litres:lit,price:isFinite(pr)?pr:null,unit:cfg.unit,grade:grade,full:full,
+    lat:pendingFuel.lat,lng:pendingFuel.lng,photo:pendingFuel.photo,sale:pendingFuel.sale,ocr:pendingFuel.ocr});
+  save(LS.fuel,fuel); cfg.lastGrade=grade; save(LS.cfg,cfg);
   $('fuelOdo').value=''; $('fuelLit').value=''; $('fuelPrice').value=''; $('fuelFull').checked=true;
-  renderFuel(); renderTrips();
+  resetPendingFuel();
+  renderFuel(); renderTrips(); toast('Fill-up added ✓');
 };
 
+/* ================= RIDE INSIGHTS — Days 2-7 analytics (v9) ================= */
+function hasImuTrack(t){ return !!(t.track && t.track.length && t.track[0].length>6); }
+/* Day 3 — smoothness + accel/brake events */
+function analyzeDynamics(t){
+  var tr=t.track,n=tr.length,hardA=0,hardB=0,jerkSq=0,jn=0,gentle=0,gc=0,prev=null,HARD=0.35;
+  for(var i=0;i<n;i++){ var gl=tr[i][6]; if(gl==null)continue; gc++;
+    if(gl>HARD)hardA++; if(gl<-HARD)hardB++; if(Math.abs(gl)<0.2)gentle++;
+    if(prev!=null){ var dj=gl-prev; jerkSq+=dj*dj; jn++; } prev=gl; }
+  var rmsJerk=jn?Math.sqrt(jerkSq/jn):0, gentleFrac=gc?gentle/gc:0;
+  var smooth=Math.round(100*(0.7*gentleFrac+0.3*Math.exp(-2*rmsJerk)));
+  return {n:gc,hardAccel:hardA,hardBrake:hardB,rmsJerk:rmsJerk,smooth:Math.max(0,Math.min(100,smooth))};
+}
+/* Day 6 — cornering + lean */
+function analyzeCorners(t){
+  var tr=t.track,n=tr.length,maxL=0,maxR=0,maxLat=0,leanT=0,lc=0,corners=0,inC=false;
+  for(var i=0;i<n;i++){ var lean=tr[i][4]||0, lat=tr[i][7], yaw=tr[i][8];
+    if(lean<0&&-lean>maxL)maxL=-lean; if(lean>0&&lean>maxR)maxR=lean;
+    if(lat!=null&&Math.abs(lat)>maxLat)maxLat=Math.abs(lat);
+    if(Math.abs(lean)>20)leanT++; lc++;
+    var cornering=(lat!=null&&Math.abs(lat)>0.15)||(yaw!=null&&Math.abs(yaw)>10);
+    if(cornering&&!inC){corners++;inC=true;} else if(!cornering){inC=false;} }
+  return {maxLeanL:Math.round(maxL),maxLeanR:Math.round(maxR),maxLat:maxLat,leanFrac:lc?leanT/lc:0,corners:corners};
+}
+/* Day 4/5 — shift detection (longitudinal-g torque-dips) + time-by-speed-band (~gear). Approximate without RPM. */
+var CB190X_BANDS=[[0,28],[22,46],[38,66],[58,86],[78,104],[96,999]];
+function gearAtSpeed(v){ for(var k=5;k>=0;k--){ if(v>=CB190X_BANDS[k][0]) return k+1; } return 1; }
+function analyzeGears(t){
+  var tr=t.track,n=tr.length,shifts=0,usage=[0,0,0,0,0,0],gn=0;
+  for(var i=1;i<n-1;i++){ var g0=tr[i-1][6],g1=tr[i][6],g2=tr[i+1][6],v0=tr[i-1][3],v2=tr[i+1][3];
+    if(g0==null||g1==null||g2==null)continue;
+    if(g0>0.1 && g1<0.0 && g2>0.05 && v2>=v0) shifts++; }
+  for(var j=0;j<n;j++){ var v=tr[j][3]; if(v==null)continue; usage[gearAtSpeed(v)-1]++; gn++; }
+  return {shifts:shifts, usage:usage.map(function(u){return gn?Math.round(100*u/gn):0;})};
+}
+/* Day 5 — engine vibration -> RPM (DFT peak on the 5 s samples) */
+function dftPeak(data,rate,fLo,fHi,step){
+  var m=0,i,N=data.length; for(i=0;i<N;i++)m+=data[i]; m/=N||1;
+  var best={f:0,mag:0};
+  for(var f=fLo; f<=fHi; f+=step){ var re=0,im=0,w=2*Math.PI*f/rate;
+    for(i=0;i<N;i++){ var s=data[i]-m; re+=s*Math.cos(w*i); im-=s*Math.sin(w*i); }
+    var mag=Math.sqrt(re*re+im*im)/(N||1); if(mag>best.mag){best.mag=mag;best.f=f;} }
+  return best;
+}
+function analyzeEngine(t){
+  if(!t.engSamples||!t.engSamples.length)return null;
+  return t.engSamples.map(function(es){ var rate=es.rate||60, hi=Math.min(rate/2-1,30);
+    var pk=dftPeak(es.data||[],rate,3,hi,0.25);
+    return {startKmh:es.startKmh, freq:pk.f, rpmFire:Math.round(pk.f*120), rpmRot:Math.round(pk.f*60), rate:rate}; });
+}
+/* Day 2 — elevation + grade (Open-Meteo, one request per ride, cached in the trip) */
+function sampleForElev(track){ var pts=track.filter(function(p){return p[1]&&p[2];});
+  var step=Math.max(1,Math.ceil(pts.length/100)), out=[];
+  for(var i=0;i<pts.length;i+=step)out.push(pts[i]);
+  if(out.length&&out[out.length-1]!==pts[pts.length-1])out.push(pts[pts.length-1]); return out; }
+function fetchElevation(t){
+  var pts=sampleForElev(t.track); if(pts.length<2)return Promise.reject(new Error('no GPS track'));
+  var lats=pts.map(function(p){return p[1];}).join(','), lons=pts.map(function(p){return p[2];}).join(',');
+  return fetch('https://api.open-meteo.com/v1/elevation?latitude='+lats+'&longitude='+lons,{cache:'no-store'})
+    .then(function(r){ if(!r.ok)throw 0; return r.json(); })
+    .then(function(j){ var el=j.elevation||[]; if(el.length!==pts.length)throw 0;
+      var climb=0,desc=0,maxGrade=0;
+      for(var i=1;i<pts.length;i++){ var de=el[i]-el[i-1]; if(de>0)climb+=de; else desc+=-de;
+        var d=hav(pts[i-1][1],pts[i-1][2],pts[i][1],pts[i][2]); if(d>5){ var gr=Math.abs(de)/d*100; if(gr<40&&gr>maxGrade)maxGrade=gr; } }
+      t.elev={times:pts.map(function(p){return p[0];}), el:el.map(function(e){return Math.round(e*10)/10;}),
+        climb:Math.round(climb), descent:Math.round(desc), maxGrade:+maxGrade.toFixed(1),
+        min:Math.round(Math.min.apply(null,el)), max:Math.round(Math.max.apply(null,el))};
+      var ix=trips.map(function(x){return x.id;}).indexOf(t.id); if(ix>=0){ trips[ix].elev=t.elev; save(LS.trips,trips); }
+      return t.elev; });
+}
+/* Day 7 — style score + tips, tied to tank economy */
+function analyzeStyle(t,dyn,cor){
+  var eco=fuelAverage(), mins=Math.max(1,(t.durS||60)/60);
+  var evRate=(dyn.hardAccel+dyn.hardBrake)/mins;
+  var score=Math.round(0.65*dyn.smooth + 35*Math.max(0,1-evRate/3));
+  score=Math.max(0,Math.min(100,score));
+  var tips=[], haRate=dyn.hardAccel/mins, hbRate=dyn.hardBrake/mins;
+  if(haRate>1.5) tips.push('Ease off the line — frequent hard acceleration is the biggest fuel drain on a small single.');
+  if(hbRate>1.5) tips.push('Anticipate stops and brake earlier / softer — it saves fuel and brake pads.');
+  if(dyn.smooth>=75) tips.push('Smooth throttle control today — that is exactly what gives best economy and engine life.');
+  if(cor.maxLat>0.6||cor.maxLeanL>35||cor.maxLeanR>35) tips.push('Committed cornering — keep tyres warm and watch painted lines / kerbs when the road is wet.');
+  tips.push('CB190X is an air-cooled single: let it warm ~1 min before revving hard, and short-shift in town to keep temperatures and wear down.');
+  return {score:score, eco:eco, tips:tips};
+}
+/* profile chart — autoscaled (unlike the zero-based drawLine) */
+function drawProfile(id,rows,color){
+  var svg=$(id); if(!svg)return; svg.innerHTML=''; var W=340,H=110,pad=12,ns='http://www.w3.org/2000/svg';
+  if(rows.length<2){ svg.innerHTML='<text x="170" y="58" fill="#5c6572" font-size="11" text-anchor="middle" font-family="sans-serif">no data</text>'; return; }
+  var vs=rows.map(function(r){return r[1];}), mn=Math.min.apply(null,vs), mx=Math.max.apply(null,vs);
+  var t0=rows[0][0], t1=rows[rows.length-1][0]||1, dv=(mx-mn)||1, dt=(t1-t0)||1;
+  function X(tm){return pad+(tm-t0)/dt*(W-2*pad);} function Y(v){return H-pad-(v-mn)/dv*(H-2*pad);}
+  var d=''; rows.forEach(function(r,i){ d+=(i?'L':'M')+X(r[0]).toFixed(1)+' '+Y(r[1]).toFixed(1)+' '; });
+  var path=document.createElementNS(ns,'path'); path.setAttribute('d',d); path.setAttribute('fill','none');
+  path.setAttribute('stroke',color); path.setAttribute('stroke-width','2'); path.setAttribute('stroke-linejoin','round'); svg.appendChild(path);
+  var lbl=document.createElementNS(ns,'text'); lbl.setAttribute('x',W-pad); lbl.setAttribute('y',14);
+  lbl.setAttribute('fill','#8a93a0'); lbl.setAttribute('font-size','10'); lbl.setAttribute('text-anchor','end');
+  lbl.setAttribute('font-family','monospace'); lbl.textContent=Math.round(mn)+'–'+Math.round(mx)+' m'; svg.appendChild(lbl);
+}
+/* render the insights panel */
+function renderInsights(t){
+  var card=$('insightsCard'); if(!card)return;
+  if(!hasImuTrack(t)){ card.classList.add('hide'); return; } card.classList.remove('hide');
+  var dyn=analyzeDynamics(t), cor=analyzeCorners(t), gear=analyzeGears(t), st=analyzeStyle(t,dyn,cor);
+  $('insStyle').innerHTML='<div class="okbox">Riding-style score <b>'+st.score+'/100</b>'+(st.eco?(' · tank economy '+fmt(kmTo(st.eco),1)+' '+uLabel()+'/L'):'')+'</div>';
+  var cells=[['Smoothness',dyn.smooth,''],['Hard accel',dyn.hardAccel,'×'],['Hard brake',dyn.hardBrake,'×'],
+    ['Max lean L/R',cor.maxLeanL+'/'+cor.maxLeanR,'°'],['Max corner',fmt(cor.maxLat,2),'g'],['Corners',cor.corners,'']];
+  $('insCells').innerHTML=cells.map(function(c){return '<div class="cell"><div class="k">'+c[0]+'</div><div class="v">'+c[1]+(c[2]?'<small>'+c[2]+'</small>':'')+'</div></div>';}).join('');
+  $('insTips').innerHTML=st.tips.map(function(x){return '<div class="item"><div class="main"><div class="d">💡 '+x+'</div></div></div>';}).join('');
+  var gh='<div class="caption" style="margin:4px 0 6px">Time by speed band (≈ gear, approx) · '+gear.shifts+' shift'+(gear.shifts===1?'':'s')+' detected</div><div class="gearbars">';
+  gear.usage.forEach(function(u,i){ gh+='<div class="gb"><span>'+(i+1)+'</span><div class="gbbar"><i style="width:'+u+'%"></i></div><span>'+u+'%</span></div>'; });
+  gh+='</div>'; $('insGear').innerHTML=gh;
+  var eng=analyzeEngine(t);
+  if(eng&&eng.length){ var eh='<div class="caption" style="margin:8px 0 6px">Engine vibration → RPM (experimental, low-rev)</div>';
+    eng.forEach(function(e,i){ eh+='<span class="pill">#'+(i+1)+(e.startKmh!=null?(' @ '+Math.round(e.startKmh)+' km/h'):'')+': '+e.freq.toFixed(1)+' Hz → ~'+e.rpmFire+' rpm</span>'; });
+    eh+='<div class="hint" style="text-align:left">Firing-frequency estimate; the phone IMU (~'+(eng[0].rate|0)+' Hz) only resolves low revs, so treat as rough.</div>';
+    $('insEngine').innerHTML=eh; }
+  else { $('insEngine').innerHTML='<div class="hint" style="text-align:left">No engine samples in this ride — tap 🎙️ Engine sample while riding to enable RPM estimates.</div>'; }
+  if(t.elev){ renderElev(t); } else { $('chartElev').classList.add('hide'); $('elevHint').textContent='Grade needs internet (one free Open-Meteo lookup, cached after).'; }
+  $('elevBtn').onclick=function(){ if(!navigator.onLine){ $('elevHint').textContent='You are offline — connect to get elevation.'; return; }
+    $('elevBtn').disabled=true; $('elevHint').textContent='Fetching elevation…';
+    fetchElevation(t).then(function(){ renderElev(t); $('elevBtn').disabled=false; }).catch(function(){ $('elevHint').textContent='Could not fetch elevation (needs internet).'; $('elevBtn').disabled=false; }); };
+}
+function renderElev(t){ if(!t.elev)return; var e=t.elev;
+  $('elevHint').innerHTML='Climb <b>'+e.climb+' m</b> · descent <b>'+e.descent+' m</b> · max grade <b>'+e.maxGrade+'%</b> · range '+e.min+'–'+e.max+' m';
+  var rows=e.times.map(function(tm,i){return [tm,e.el[i]];});
+  $('chartElev').classList.remove('hide'); drawProfile('chartElev',rows,'#8a93a0'); }
+/* ================= FUEL-PUMP SCANNER + OCR (v8) ================= */
+/* Lazy-loaded (Tesseract + OpenCV, ~20 MB on first use). Reads the Shell/Tatsuno
+   pump LCD: blue panel -> perspective de-skew -> 3 stacked numbers -> geometric
+   7-seg decoder + Tesseract ssd -> reconcile by sale = litres x price. Photo
+   thumbnail + GPS are saved regardless; odometer is always typed by hand. */
+var pendingFuel={photo:null,lat:null,lng:null,sale:null,ocr:null};
+function resetPendingFuel(){ pendingFuel={photo:null,lat:null,lng:null,sale:null,ocr:null}; var b=$('scanBox'); if(b){b.innerHTML='';b.classList.add('hide');} }
+$('scanBtn').onclick=function(){ $('scanFile').click(); };
+$('scanFile').onchange=function(ev){ var f=ev.target.files&&ev.target.files[0]; ev.target.value=''; if(f)handleScanFile(f); };
+function handleScanFile(f){
+  var box=$('scanBox'); box.classList.remove('hide'); box.innerHTML='<div class="scanprog">Loading photo…</div>';
+  var url=URL.createObjectURL(f), img=new Image();
+  img.onload=function(){ var th=imgToCanvas(img,360); try{pendingFuel.photo=th.toDataURL('image/jpeg',0.6);}catch(e){pendingFuel.photo=null;}
+    var full=imgToCanvas(img,1400); try{URL.revokeObjectURL(url);}catch(e){} renderScanBox(full); grabFuelGps(); };
+  img.onerror=function(){ box.innerHTML='<div class="scanprog">Could not read that photo.</div>'; try{URL.revokeObjectURL(url);}catch(e){} };
+  img.src=url;
+}
+function grabFuelGps(){ if(!navigator.geolocation)return;
+  navigator.geolocation.getCurrentPosition(function(p){ pendingFuel.lat=+p.coords.latitude.toFixed(5); pendingFuel.lng=+p.coords.longitude.toFixed(5);
+    var g=$('scanGeo'); if(g)g.textContent='📍 location tagged'; },function(){ var g=$('scanGeo'); if(g)g.textContent='location off'; },{enableHighAccuracy:false,maximumAge:60000,timeout:8000}); }
+function renderScanBox(full){
+  var box=$('scanBox'); box.innerHTML='';
+  var im=document.createElement('img'); im.className='shot'; if(pendingFuel.photo)im.src=pendingFuel.photo; box.appendChild(im);
+  var geo=document.createElement('div'); geo.id='scanGeo'; geo.className='geo'; geo.textContent=pendingFuel.lat?'📍 location tagged':'getting location…'; box.appendChild(geo);
+  var prog=document.createElement('div'); prog.className='scanprog'; prog.id='scanProg'; box.appendChild(prog);
+  var btnRow=document.createElement('div'); btnRow.className='row';
+  var auto=document.createElement('button'); auto.className='btn blue'; auto.textContent='✨ Auto-read numbers';
+  auto.onclick=function(){ auto.disabled=true; runOcr(full,prog,auto); };
+  btnRow.appendChild(auto); box.appendChild(btnRow);
+  var hint=document.createElement('div'); hint.className='hint'; hint.style.textAlign='left';
+  hint.textContent='Auto-read downloads a reader (~20 MB) the first time, then works offline. Or just type Litres & price below.';
+  box.appendChild(hint);
+  toast('Photo attached — saves with this fill-up');
+}
+async function runOcr(full,prog,auto){
+  try{
+    await loadOcrLibs(function(m){prog.textContent=m;});
+    prog.textContent='Warming up the reader…'; await waitCv(25000);
+    await initSsd();
+    prog.textContent='Finding the panel & reading digits…';
+    var res=await readPumpCanvas(full);
+    showOcrResult(res,prog);
+  }catch(e){ prog.textContent='Could not auto-read ('+((e&&e.message)||e)+'). Please type the numbers below.'; if(auto)auto.disabled=false; }
+}
+function showOcrResult(res,prog){
+  var box=$('scanBox'), sale=res.got[0],lit=res.got[1],pr=res.got[2];
+  var wrap=document.createElement('div'); wrap.className='scanres';
+  function rr(l,v){ return '<div class="rr"><span>'+l+'</span><b>'+v+'</b></div>'; }
+  wrap.innerHTML=rr('This sale $',sale)+rr('Litres',lit)+rr('$ / litre',pr)+
+    '<div class="hint" style="text-align:left">'+(res.confident?'✓ Cross-checks (sale = litres × price).':'⚠️ Could not fully verify — check against the pump.')+'</div>';
+  box.appendChild(wrap);
+  var row=document.createElement('div'); row.className='row';
+  var use=document.createElement('button'); use.className='btn go'; use.textContent='Use these';
+  var edit=document.createElement('button'); edit.className='btn'; edit.textContent='Type instead';
+  function fill(){ if(isFinite(parseFloat(lit)))$('fuelLit').value=lit; if(isFinite(parseFloat(pr)))$('fuelPrice').value=pr; pendingFuel.sale=parseFloat(sale)||null; pendingFuel.ocr={method:res.method,confident:res.confident}; }
+  use.onclick=function(){ fill(); toast('Filled — check the numbers'); try{$('fuelOdo').focus();}catch(e){} };
+  edit.onclick=function(){ try{$('fuelLit').focus();}catch(e){} };
+  row.appendChild(use); row.appendChild(edit); box.appendChild(row);
+  prog.textContent='Read done — review:';
+  if(res.confident) fill();
+}
+/* ---- lazy library loading ---- */
+var ocrLibsP=null, ssdWorker=null, ssdP=null;
+function loadScript(src){ return new Promise(function(res,rej){ var s=document.createElement('script'); s.src=src; s.async=true; s.onload=function(){res(true);}; s.onerror=function(){rej(new Error('download failed'));}; document.head.appendChild(s); }); }
+function loadOcrLibs(prog){ if(ocrLibsP)return ocrLibsP;
+  ocrLibsP=(async function(){ if(prog)prog('Downloading number reader (~20 MB, first time)…');
+    await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
+    if(prog)prog('Downloading panel detector…');
+    try{ await loadScript('https://docs.opencv.org/4.10.0/opencv.js'); }catch(e){ window.__cvFailed=true; }
+    return true; })(); return ocrLibsP; }
+function initSsd(){ if(ssdP)return ssdP;
+  ssdP=(async function(){ ssdWorker=await Tesseract.createWorker('ssd',1,{langPath:'https://cdn.jsdelivr.net/gh/Shreeshrii/tessdata_ssd@master',gzip:false});
+    await ssdWorker.setParameters({tessedit_char_whitelist:'0123456789. ',tessedit_pageseg_mode:'7'}); return ssdWorker; })(); return ssdP; }
+async function readPumpCanvas(src){
+  var panel=null; if(cvReady){ try{panel=detectAndWarp(src);}catch(e){} }
+  if(!panel){ panel=blueBlobCrop(src)||src; }
+  var bands=rowBands(panel), candFields=[[],[],[]];
+  for(var k=0;k<3;k++){
+    var bins=rowBinaries(panel,bands[k]), seen={};
+    for(var bi=0;bi<bins.length;bi++){ var dec=decodeRow(maskOf(bins[bi]));
+      if(dec.digits&&dec.digits.length>=2&&dec.digits.length<=6&&!seen['seg'+dec.digits]){ seen['seg'+dec.digits]=1;
+        candFields[k].push({v:(k<2?valAmount(dec.digits):valPrice(dec.digits)),c:80+dec.conf*4,d:dec.digits}); } }
+    for(var bj=0;bj<bins.length;bj++){ var r=await ssdWorker.recognize(tightScale(bins[bj])); var dat=r.data||{}; var conf=(typeof dat.confidence==='number')?dat.confidence:0;
+      digitTokens(dat.text).forEach(function(dg){ if(!seen['ssd'+dg]){ seen['ssd'+dg]=1; candFields[k].push({v:(k<2?valAmount(dg):valPrice(dg)),c:conf,d:dg}); } }); }
+  }
+  return reconcile(candFields[0],candFields[1],candFields[2]);
+}
+/* ---- numeric helpers + physics reconciliation (ported, verified) ---- */
+function round2(x){ return Math.round(x*100)/100; }
+function snapCent(x){ return Math.round(x*100)/100; }
+function fx2(x){ return (isFinite(x)?x:0).toFixed(2); }
+function fx3(x){ return (isFinite(x)?x:0).toFixed(3); }
+var plausS=function(x){return isFinite(x)&&x>=1&&x<=400;};
+var plausL=function(x){return isFinite(x)&&x>=0.3&&x<=150;};
+var plausP=function(x){return isFinite(x)&&x>=2&&x<=8;};
+function consistent(S,L,P){ return Math.abs(S - round2(L*P)) <= 0.02; }
+function digitTokens(text){ var toks=(text||"").match(/[0-9][0-9.]*/g)||[], seen={}, out=[];
+  toks.forEach(function(t){ var d=t.replace(/\D/g,""); if(d.length>=2&&d.length<=6&&!seen[d]){seen[d]=1;out.push(d);} }); return out; }
+function valAmount(d){ return parseInt(d,10)/100; }
+function valPrice(d){ return parseInt(d,10)/Math.pow(10, d.length-1); }
+function reconcile(candS, candL, candP){
+  function opts(list, plaus){ var o=[{v:NaN,c:0,read:false}]; list.forEach(function(k){ if(plaus(k.v)) o.push({v:k.v,c:k.c,read:true}); }); return o; }
+  var OS=opts(candS,plausS), OL=opts(candL,plausL), OP=opts(candP,plausP);
+  var has=function(list,v){ for(var i=0;i<list.length;i++){ if(Math.abs(list[i].v-v)<0.005) return true; } return false; };
+  var best=null;
+  for(var i=0;i<OS.length;i++) for(var j=0;j<OL.length;j++) for(var k=0;k<OP.length;k++){
+    var s=OS[i], l=OL[j], p=OP[k], nRead=(s.read?1:0)+(l.read?1:0)+(p.read?1:0);
+    if(nRead<2) continue;
+    var S=s.v,L=l.v,P=p.v,method,cb=0,co=0;
+    if(nRead===3){ P=snapCent(P); if(!consistent(S,L,P)) continue; method="3/3 read, consistent"; cb=300; }
+    else{
+      if(!s.read){ S=round2(L*P); method="sale = litres×price"; if(has(candS,S)) co=70; }
+      else if(!l.read){ L=round2(S/P); method="litres = sale÷price"; if(has(candL,L)) co=70; }
+      else { P=snapCent(S/L); method="price = sale÷litres"; if(has(candP,P)) co=70; }
+      cb=120;
+    }
+    if(!(plausS(S)&&plausL(L)&&plausP(P))) continue;
+    var score=s.c+l.c+p.c+cb+co;
+    if(!best || score>best.score) best={score:score, got:[fx2(S),fx2(L),fx3(P)], method:method, confident:(cb>=300)||(co>0)};
+  }
+  if(!best){ var a=candS[0],b=candL[0],c=candP[0];
+    return { got:[fx2(a?a.v:0), fx2(b?b.v:0), fx3(c?c.v:0)], method:"insufficient reads", confident:false }; }
+  return best;
+}
+/* ---- image / canvas utils (ported) ---- */
+function imgToCanvas(img, maxW){ var w=img.naturalWidth||img.width, h=img.naturalHeight||img.height, s=(maxW&&w>maxW)?maxW/w:1;
+  var c=document.createElement("canvas"); c.width=Math.max(1,Math.round(w*s)); c.height=Math.max(1,Math.round(h*s));
+  c.getContext("2d").drawImage(img,0,0,c.width,c.height); return c; }
+function cropCanvas(src,b){ var x0=Math.max(0,Math.floor(b.x0)),y0=Math.max(0,Math.floor(b.y0)),x1=Math.min(src.width,Math.ceil(b.x1)),y1=Math.min(src.height,Math.ceil(b.y1));
+  var w=Math.max(1,x1-x0),h=Math.max(1,y1-y0),c=document.createElement("canvas"); c.width=w; c.height=h;
+  c.getContext("2d").drawImage(src,x0,y0,w,h,0,0,w,h); return c; }
+function otsu(hist,total){ var sum=0,i; for(i=0;i<256;i++) sum+=i*hist[i]; var sB=0,wB=0,mx=0,thr=0; for(var t=0;t<256;t++){ wB+=hist[t]; if(!wB)continue; var wF=total-wB; if(!wF)break; sB+=t*hist[t]; var mB=sB/wB,mF=(sum-sB)/wF,b=wB*wF*(mB-mF)*(mB-mF); if(b>mx){mx=b;thr=t;} } return thr; }
+/* ---- OpenCV readiness + detect/warp ---- */
+var cvReady=false;
+function waitCv(ms){ return new Promise(function(res){
+  var done=false; function ok(){ if(!done){done=true;cvReady=true;res(true);} } function fail(){ if(!done){done=true;res(false);} }
+  if(window.cv&&cv.Mat) return ok();
+  if(window.__cvFailed) return fail();
+  var t0=Date.now(), t=setInterval(function(){
+    if(window.cv){ if(cv.Mat){clearInterval(t);ok();} else { try{cv.onRuntimeInitialized=function(){clearInterval(t);ok();};}catch(e){} } }
+    if(window.__cvFailed && !(window.cv&&cv.Mat)){ clearInterval(t); fail(); }
+    if(Date.now()-t0>ms){ clearInterval(t); fail(); }
+  },120);
+}); }
+function orderCorners(p){ var byY=p.slice().sort(function(a,b){return a.y-b.y;});
+  var top=byY.slice(0,2).sort(function(a,b){return a.x-b.x;}); var bot=byY.slice(2).sort(function(a,b){return a.x-b.x;});
+  return [top[0],top[1],bot[1],bot[0]]; }
+var LCD_W=680, LCD_H=460;
+function detectAndWarp(img){
+  if(!cvReady) return null;
+  var src=null,rgb=null,hsv=null,mask=null,low=null,high=null,k=null,contours=null,hier=null,M=null,dst=null,st=null,dt=null,best=null;
+  try{
+    src=cv.imread(img); rgb=new cv.Mat(); cv.cvtColor(src,rgb,cv.COLOR_RGBA2RGB);
+    hsv=new cv.Mat(); cv.cvtColor(rgb,hsv,cv.COLOR_RGB2HSV);
+    mask=new cv.Mat(); low =new cv.Mat(hsv.rows,hsv.cols,hsv.type(),[85,45,45,0]); high=new cv.Mat(hsv.rows,hsv.cols,hsv.type(),[135,255,255,255]);
+    cv.inRange(hsv,low,high,mask);
+    var ks=Math.max(9,Math.round(Math.min(src.rows,src.cols)/45));
+    k=cv.getStructuringElement(cv.MORPH_RECT,new cv.Size(ks,ks));
+    cv.morphologyEx(mask,mask,cv.MORPH_CLOSE,k); cv.morphologyEx(mask,mask,cv.MORPH_OPEN,k);
+    contours=new cv.MatVector(); hier=new cv.Mat(); cv.findContours(mask,contours,hier,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
+    var minArea=src.rows*src.cols*0.02, bestArea=0;
+    for(var i=0;i<contours.size();i++){ var c=contours.get(i), a=cv.contourArea(c);
+      if(a>bestArea && a>minArea){ if(best) best.delete(); best=c; bestArea=a; } else c.delete(); }
+    if(!best) return null;
+    var rect=cv.minAreaRect(best), v=cv.RotatedRect.points(rect);
+    var o=orderCorners([{x:v[0].x,y:v[0].y},{x:v[1].x,y:v[1].y},{x:v[2].x,y:v[2].y},{x:v[3].x,y:v[3].y}]);
+    st=cv.matFromArray(4,1,cv.CV_32FC2,[o[0].x,o[0].y,o[1].x,o[1].y,o[2].x,o[2].y,o[3].x,o[3].y]);
+    dt=cv.matFromArray(4,1,cv.CV_32FC2,[0,0,LCD_W,0,LCD_W,LCD_H,0,LCD_H]);
+    M=cv.getPerspectiveTransform(st,dt); dst=new cv.Mat();
+    cv.warpPerspective(src,dst,M,new cv.Size(LCD_W,LCD_H),cv.INTER_LINEAR,cv.BORDER_CONSTANT,new cv.Scalar());
+    var out=document.createElement("canvas"); out.width=LCD_W; out.height=LCD_H; cv.imshow(out,dst); return out;
+  }catch(e){ return null; }
+  finally{ [src,rgb,hsv,mask,low,high,k,contours,hier,M,dst,st,dt,best].forEach(function(m){try{if(m&&m.delete)m.delete();}catch(e){}}); }
+}
+function blueBlobCrop(canvas){
+  try{
+    var ctx=canvas.getContext("2d"), W=canvas.width, H=canvas.height, p=ctx.getImageData(0,0,W,H).data;
+    var ds=Math.max(1,Math.round(Math.min(W,H)/160)), gw=Math.ceil(W/ds), gh=Math.ceil(H/ds), cell=new Uint16Array(gw*gh);
+    for(var y=0;y<H;y++) for(var x=0;x<W;x++){ var i=(y*W+x)*4,r=p[i],g=p[i+1],b=p[i+2];
+      if(b>100&&b>=r+25&&b>=g+12&&b>=r&&b>=g) cell[((y/ds)|0)*gw+((x/ds)|0)]++; }
+    var on=new Uint8Array(gw*gh), thr=ds*ds*0.35, c;
+    for(c=0;c<on.length;c++) on[c]=cell[c]>thr?1:0;
+    var lab=new Int32Array(gw*gh), cur=0,best=0,bl=0,stack=[];
+    for(var s=0;s<on.length;s++){ if(on[s]&&!lab[s]){ cur++; var cnt=0; stack.length=0; stack.push(s); lab[s]=cur;
+      while(stack.length){ var q=stack.pop(); cnt++; var qx=q%gw; var nb=[q-1,q+1,q-gw,q+gw];
+        for(var nI=0;nI<4;nI++){ var nq=nb[nI]; if(nq<0||nq>=on.length) continue; if(nI===0&&qx===0)continue; if(nI===1&&qx===gw-1)continue; if(on[nq]&&!lab[nq]){lab[nq]=cur;stack.push(nq);} } }
+      if(cnt>best){best=cnt;bl=cur;} } }
+    if(!bl||best<(gw*gh)/80) return null;
+    var minx=gw,miny=gh,maxx=0,maxy=0;
+    for(var t=0;t<lab.length;t++){ if(lab[t]===bl){ var tx=t%gw,ty=(t/gw)|0; if(tx<minx)minx=tx; if(tx>maxx)maxx=tx; if(ty<miny)miny=ty; if(ty>maxy)maxy=ty; } }
+    return cropCanvas(canvas,{x0:minx*ds,y0:miny*ds,x1:(maxx+1)*ds,y1:(maxy+1)*ds});
+  }catch(e){ return null; }
+}
+function blueGrayData(canvas){ var ctx=canvas.getContext("2d"),id=ctx.getImageData(0,0,canvas.width,canvas.height),p=id.data; for(var i=0;i<p.length;i+=4){var v=p[i+2];p[i]=p[i+1]=p[i+2]=v;} return id; }
+function rowBands(panel){
+  var W=panel.width,H=panel.height,id=blueGrayData(panel),p=id.data,x,y;
+  var x0=Math.floor(W*0.30), hist=new Array(256).fill(0);
+  for(y=0;y<H;y++) for(x=x0;x<W;x++) hist[p[(y*W+x)*4]]++;
+  var thr=otsu(hist,(W-x0)*H), proj=new Array(H).fill(0);
+  for(y=0;y<H;y++){ var cnt=0; for(x=x0;x<W;x++){ if(p[(y*W+x)*4]<thr) cnt++; } proj[y]=cnt; }
+  var win=Math.max(3,Math.round(H*0.02)), sm=new Array(H).fill(0);
+  for(y=0;y<H;y++){ var a=0,nn=0; for(var d=-win;d<=win;d++){ var yy=y+d; if(yy>=0&&yy<H){a+=proj[yy];nn++;} } sm[y]=a/nn; }
+  var mx=0; for(y=0;y<H;y++) if(sm[y]>mx) mx=sm[y];
+  if(mx<=0) return fallbackBands(H);
+  var on=sm.map(function(v){return v>mx*0.15;}), runs=[], st=-1;
+  for(y=0;y<H;y++){ if(on[y]&&st<0) st=y; if((!on[y])&&st>=0){ runs.push([st,y]); st=-1; } }
+  if(st>=0) runs.push([st,H]);
+  var merged=[]; runs.forEach(function(r){ if(merged.length&&r[0]-merged[merged.length-1][1]<H*0.05) merged[merged.length-1][1]=r[1]; else merged.push(r.slice()); });
+  merged.forEach(function(r){ var sumv=0; for(y=r[0];y<r[1];y++) sumv+=sm[y]; r.mass=sumv; });
+  merged.sort(function(a,b){return b.mass-a.mass;});
+  var top=merged.slice(0,3).sort(function(a,b){return a[0]-b[0];});
+  if(top.length!==3) return fallbackBands(H);
+  var pad=Math.round(H*0.055);
+  return top.map(function(r){ return {y0:Math.max(0,r[0]-pad), y1:Math.min(H,r[1]+pad)}; });
+}
+function fallbackBands(H){ return [0.17,0.5,0.82].map(function(c){ return {y0:Math.max(0,Math.round(H*(c-0.19))), y1:Math.min(H,Math.round(H*(c+0.19)))}; }); }
+function rowBinaries(panel, band){
+  var x0=Math.floor(panel.width*0.12);
+  var rowC=cropCanvas(panel, {x0:x0,y0:band.y0,x1:panel.width,y1:band.y1});
+  if(cvReady){ try{ return cvBinaries(rowC); }catch(e){} }
+  return [jsBinary(rowC)];
+}
+function cvBinaries(rowC){
+  var src=cv.imread(rowC), rgb=new cv.Mat(), ch=new cv.MatVector(), outs=[];
+  try{
+    cv.cvtColor(src,rgb,cv.COLOR_RGBA2RGB); cv.split(rgb,ch);
+    var blue=ch.get(2), up=new cv.Mat(), sc=Math.max(1.5,170/rowC.height);
+    cv.resize(blue,up,new cv.Size(0,0),sc,sc,cv.INTER_CUBIC);
+    var blur=new cv.Mat(); cv.GaussianBlur(up,blur,new cv.Size(3,3),0);
+    var kc=cv.getStructuringElement(cv.MORPH_ELLIPSE,new cv.Size(3,3));
+    function closeInk(m){ var inv=new cv.Mat(); cv.bitwise_not(m,inv); cv.morphologyEx(inv,inv,cv.MORPH_CLOSE,kc); cv.bitwise_not(inv,m); inv.delete(); }
+    var bs=Math.max(21,(Math.round(blur.rows*0.9)|1)); if(bs%2===0) bs++;
+    var a=new cv.Mat(); cv.adaptiveThreshold(blur,a,255,cv.ADAPTIVE_THRESH_GAUSSIAN_C,cv.THRESH_BINARY,bs,10); closeInk(a);
+    var ca=document.createElement("canvas"); cv.imshow(ca,a); outs.push(ca); a.delete();
+    var o=new cv.Mat(); cv.threshold(blur,o,0,255,cv.THRESH_BINARY|cv.THRESH_OTSU); closeInk(o);
+    var co=document.createElement("canvas"); cv.imshow(co,o); outs.push(co); o.delete();
+    up.delete(); blur.delete(); kc.delete();
+    return outs;
+  } finally { try{src.delete();rgb.delete();ch.delete();}catch(e){} }
+}
+function jsBinary(rowC){
+  var sc=Math.max(1.5,160/rowC.height), W=Math.round(rowC.width*sc), H=Math.round(rowC.height*sc);
+  var c=document.createElement("canvas"); c.width=W; c.height=H; var x=c.getContext("2d");
+  x.imageSmoothingEnabled=true; x.drawImage(rowC,0,0,W,H);
+  var id=x.getImageData(0,0,W,H),p=id.data,hist=new Array(256).fill(0),i;
+  for(i=0;i<p.length;i+=4) hist[p[i+2]]++;
+  var thr=otsu(hist,W*H);
+  for(i=0;i<p.length;i+=4){ var v=p[i+2]>thr?255:0; p[i]=p[i+1]=p[i+2]=v; }
+  x.putImageData(id,0,0); return c;
+}
+function tightScale(binCanvas){
+  var W=binCanvas.width,H=binCanvas.height,ctx=binCanvas.getContext("2d"),p=ctx.getImageData(0,0,W,H).data;
+  var minx=W,miny=H,maxx=0,maxy=0,x,y;
+  for(y=0;y<H;y++) for(x=0;x<W;x++){ if(p[(y*W+x)*4]<128){ if(x<minx)minx=x; if(x>maxx)maxx=x; if(y<miny)miny=y; if(y>maxy)maxy=y; } }
+  if(maxx<=minx||maxy<=miny){ minx=0;miny=0;maxx=W-1;maxy=H-1; }
+  var mx=8,my=6; minx=Math.max(0,minx-mx);maxx=Math.min(W-1,maxx+mx);miny=Math.max(0,miny-my);maxy=Math.min(H-1,maxy+my);
+  var cw=maxx-minx+1,chh=maxy-miny+1,scale=Math.max(1,140/chh),nw=Math.round(cw*scale),nh=Math.round(chh*scale),pad=22;
+  var out=document.createElement("canvas"); out.width=nw+pad*2; out.height=nh+pad*2;
+  var o=out.getContext("2d"); o.fillStyle="#fff"; o.fillRect(0,0,out.width,out.height);
+  o.imageSmoothingEnabled=true; o.drawImage(binCanvas,minx,miny,cw,chh,pad,pad,nw,nh);
+  var oi=o.getImageData(0,0,out.width,out.height),q=oi.data,i;
+  for(i=0;i<q.length;i+=4){ var v=q[i]>150?255:0; q[i]=q[i+1]=q[i+2]=v; } o.putImageData(oi,0,0);
+  return out;
+}
+var SEG={'0':"abcdef",'1':"bc",'2':"abged",'3':"abgcd",'4':"fgbc",'5':"afgcd",'6':"afgecd",'7':"abc",'8':"abcdefg",'9':"abcdfg"};
+var SEGSET={}; Object.keys(SEG).forEach(function(d){ SEGSET[d]={}; SEG[d].split("").forEach(function(s){SEGSET[d][s]=1;}); });
+var ALLSEG="abcdefg".split("");
+var BOX={a:[0.20,0.80,0.00,0.18],g:[0.20,0.80,0.41,0.59],d:[0.20,0.80,0.82,1.00],
+         f:[0.00,0.26,0.10,0.48],b:[0.74,1.00,0.10,0.48],e:[0.00,0.26,0.52,0.90],c:[0.74,1.00,0.52,0.90]};
+function maskOf(binCanvas){ var W=binCanvas.width,H=binCanvas.height,p=binCanvas.getContext("2d").getImageData(0,0,W,H).data,ink=new Uint8Array(W*H);
+  for(var i=0,j=0;i<p.length;i+=4,j++) ink[j]=p[i]<128?1:0; return {w:W,h:H,ink:ink}; }
+function inkFrac(m,x0,x1,y0,y1){ x0=Math.max(0,Math.floor(x0));x1=Math.min(m.w,Math.ceil(x1));y0=Math.max(0,Math.floor(y0));y1=Math.min(m.h,Math.ceil(y1));
+  if(x1<=x0||y1<=y0) return 0; var cnt=0,tot=(x1-x0)*(y1-y0);
+  for(var y=y0;y<y1;y++){ var row=y*m.w; for(var x=x0;x<x1;x++) cnt+=m.ink[row+x]; } return cnt/tot; }
+function decodeBBox(m,x0,x1,y0,y1,aspect){
+  var cw=x1-x0,ch=y1-y0; if(cw<3||ch<8) return null;
+  if(aspect!=null && aspect<0.38) return "1";
+  var on={}; ALLSEG.forEach(function(s){ var B=BOX[s]; on[s]=inkFrac(m,x0+B[0]*cw,x0+B[1]*cw,y0+B[2]*ch,y0+B[3]*ch)>0.38; });
+  var best=null,bd=99,sd=99;
+  Object.keys(SEG).forEach(function(d){ var dist=0,s; for(var t=0;t<ALLSEG.length;t++){ s=ALLSEG[t]; var a=on[s]?1:0,b=SEGSET[d][s]?1:0; if(a!==b) dist++; } if(dist<bd){sd=bd;bd=dist;best=d;} else if(dist<sd){sd=dist;} });
+  if(bd>1) return null; return best;
+}
+function components(m){
+  var W=m.w,H=m.h,lab=new Int32Array(W*H),comps=[],cur=0,stack=[];
+  for(var s=0;s<W*H;s++){ if(m.ink[s]&&!lab[s]){ cur++; stack.length=0; stack.push(s); lab[s]=cur;
+    var x0=s%W,x1=s%W,y0=(s/W)|0,y1=(s/W)|0,area=0;
+    while(stack.length){ var q=stack.pop(); area++; var qx=q%W,qy=(q/W)|0;
+      if(qx<x0)x0=qx; if(qx>x1)x1=qx; if(qy<y0)y0=qy; if(qy>y1)y1=qy;
+      var cand=[q-1,q+1,q-W,q+W,q-W-1,q-W+1,q+W-1,q+W+1];
+      for(var n=0;n<8;n++){ var nq=cand[n]; if(nq<0||nq>=W*H||lab[nq]||!m.ink[nq]) continue;
+        var nx=nq%W; if((n===0||n===4||n===6)&&qx===0) continue; if((n===1||n===5||n===7)&&qx===W-1) continue;
+        lab[nq]=cur; stack.push(nq); } }
+    comps.push({x0:x0,x1:x1+1,y0:y0,y1:y1+1,area:area}); } }
+  return comps;
+}
+function decodeRow(m){
+  var comps=components(m); if(!comps.length) return {digits:"",conf:0};
+  var bandArea=m.w*m.h, Hd=0, i;
+  for(i=0;i<comps.length;i++){ var hh=comps[i].y1-comps[i].y0; if(hh>Hd) Hd=hh; }
+  var big=comps.filter(function(c){ return c.area>0.004*bandArea && (c.y1-c.y0)>0.5*Hd; });
+  if(!big.length) return {digits:"",conf:0};
+  big.sort(function(a,b){return a.x0-b.x0;});
+  var Wd=0.52*Hd, groups=[];
+  big.forEach(function(c){ var g=groups[groups.length-1];
+    if(g && c.x0 <= g.x1 - 0.15*Wd){ g.x0=Math.min(g.x0,c.x0); g.x1=Math.max(g.x1,c.x1); g.y0=Math.min(g.y0,c.y0); g.y1=Math.max(g.y1,c.y1); }
+    else groups.push({x0:c.x0,x1:c.x1,y0:c.y0,y1:c.y1}); });
+  var gy0=1e9,gy1=0; groups.forEach(function(g){ if(g.y0<gy0)gy0=g.y0; if(g.y1>gy1)gy1=g.y1; });
+  var Hdg=gy1-gy0, digits="", conf=0;
+  groups.forEach(function(g){ var w=g.x1-g.x0, nd=Math.max(1,Math.round(w/Wd));
+    if(w<0.45*Wd) nd=1;
+    for(var t=0;t<nd;t++){ var cx0=g.x0+t*w/nd, cx1=g.x0+(t+1)*w/nd, asp=(nd===1&&Hdg>0)?((cx1-cx0)/Hdg):null;
+      var dd=decodeBBox(m,cx0,cx1,gy0,gy1,asp); if(dd==null) continue; digits+=dd; conf++; } });
+  return {digits:digits, conf:conf};
+}
 /* ================= ODO MODAL ================= */
 var modalCb=null;
-function openOdoModal(title,sub,unit,okText,cb){
-  $('mTitle').textContent=title; $('mSub').textContent=sub;
-  $('mLabel').textContent='Odometer ('+unit+')'; $('mOk').textContent=okText; $('mOdo').value='';
-  modalCb=cb; $('scrim').classList.add('on'); setTimeout(function(){$('mOdo').focus();},50);
+function openOdoModal(title,sub,unit,okText,cb){   /* v11: on-screen keypad (no native input → no iOS "Undo Typing" popup) */
+  openKeypad({title:title, sub:sub+'  ·  odometer in '+unit, ph:'0', initial:'', allowDot:true,
+    okText:okText, skipText:'Skip', onOk:function(v){ cb(v); }, onSkip:function(){ cb(null); }});
 }
 $('mOk').onclick=function(){ var v=parseFloat($('mOdo').value); $('scrim').classList.remove('on'); var cb=modalCb; modalCb=null; if(cb)cb(isFinite(v)?v:null); };
-$('mCancel').onclick=function(){ $('scrim').classList.remove('on'); modalCb=null; };
+$('mCancel').onclick=function(){ $('scrim').classList.remove('on'); var cb=modalCb; modalCb=null; if(cb)cb(null); };
+
+/* ================= v11: on-screen keypad ================= */
+var kpState=null;
+function kpRender(){ var d=$('kpDisp'); if(!d)return;
+  if(kpState&&kpState.val){ d.textContent=kpState.val; } else { d.innerHTML='<span class="ph">'+((kpState&&kpState.ph)||'0')+'</span>'; } }
+function openKeypad(o){ kpState={val:(o.initial!=null&&o.initial!==''?String(o.initial):''),ph:o.ph||'0',allowDot:o.allowDot!==false,onOk:o.onOk,onSkip:o.onSkip};
+  $('kpTitle').textContent=o.title||'Enter number';
+  var sub=$('kpSub'); sub.textContent=o.sub||''; sub.style.display=o.sub?'':'none';
+  $('kpOk').textContent=o.okText||'Done';
+  var sk=$('kpSkip'); sk.textContent=o.skipText||'Skip'; sk.style.display=(o.onSkip?'':'none');
+  kpRender(); $('kpScrim').classList.add('on'); }
+function kpClose(){ $('kpScrim').classList.remove('on'); kpState=null; }
+function kpPress(k){ if(!kpState)return;
+  if(k==='del'){ kpState.val=kpState.val.slice(0,-1); }
+  else if(k==='.'){ if(kpState.allowDot && kpState.val.indexOf('.')<0) kpState.val=(kpState.val||'0')+'.'; }
+  else { if(kpState.val.replace('.','').length<9) kpState.val+=k; }
+  kpRender(); }
+(function(){ var g=$('kpGrid'); if(g)[].forEach.call(g.querySelectorAll('button'),function(b){ b.onclick=function(){ kpPress(b.getAttribute('data-k')); }; }); })();
+$('kpOk').onclick=function(){ if(!kpState)return; var raw=kpState.val, v=(raw===''?null:parseFloat(raw)), cb=kpState.onOk; kpClose(); if(cb)cb(isFinite(v)?v:null,raw); };
+$('kpSkip').onclick=function(){ if(!kpState)return; var cb=kpState.onSkip; kpClose(); if(cb)cb(); };
+
+/* ================= v11: forced pre-ride checklist ================= */
+var gateGps=null, gateState={gps:false,cal:false,ack:false};
+function gateUpdate(){ var b=$('gateStart'); if(b)b.disabled=!(gateState.gps&&gateState.cal&&gateState.ack); }
+function gateStopGps(){ if(gateGps!=null){ try{navigator.geolocation.clearWatch(gateGps);}catch(e){} gateGps=null; } }
+function gateRefreshCal(){ var done=!!(cfg.imuCal&&cfg.imuCal.grav); gateState.cal=done;
+  var s=$('gStepCal'); if(s)s.className='gatestep'+(done?' done':'');
+  var l=$('gCalLive'); if(l)l.textContent=done?(imu.fwdLock?'calibrated ✓ (forward locked)':'upright set ✓ — forward auto-locks while riding'):'not calibrated yet';
+  gateUpdate(); }
+function openPreRide(){ if(rec)return;
+  gateState={gps:false,cal:false,ack:false};
+  $('gAck').checked=false; $('gStepAck').className='gatestep';
+  $('gStepGps').className='gatestep'; $('gGpsLive').textContent='getting GPS…'; $('gGpsSkip').style.display='none';
+  gateRefreshCal();
+  $('gateScrim').classList.add('on'); gateUpdate();
+  if(navigator.geolocation){ var t0=Date.now();
+    gateGps=navigator.geolocation.watchPosition(function(p){
+      var acc=(p.coords.accuracy==null?999:p.coords.accuracy);
+      $('gGpsLive').textContent='GPS ±'+fmt(acc)+' m'+(acc<=GPS_GOOD?'  ✓ ready':'  — hold on…');
+      if(acc<=GPS_GOOD && !gateState.gps){ gateState.gps=true; $('gStepGps').className='gatestep done'; gateUpdate(); }
+      else if(acc>GPS_GOOD && (Date.now()-t0)>18000){ $('gGpsSkip').style.display=''; }
+    }, function(e){ $('gGpsLive').textContent='GPS error — '+((e&&e.message)||'no fix'); $('gGpsSkip').style.display=''; },
+    {enableHighAccuracy:true,maximumAge:0,timeout:25000});
+  } else { $('gGpsLive').textContent='no GPS on this browser'; $('gGpsSkip').style.display=''; } }
+$('gGpsSkip').onclick=function(){ gateState.gps=true; $('gStepGps').className='gatestep warn'; gateUpdate(); };
+$('gCalBtn').onclick=function(){ $('calScrim').classList.add('on');
+  $('calS1Live').textContent=''; $('calS1').classList.toggle('done',!!(cfg.imuCal&&cfg.imuCal.grav));
+  $('calS2').classList.toggle('done',imu.fwdLock); $('calS2Live').textContent=imu.fwdLock?'forward axis: locked ✓':'forward axis: not set'; };
+$('gAck').onchange=function(){ gateState.ack=$('gAck').checked; $('gStepAck').className='gatestep'+(gateState.ack?' done':''); gateUpdate(); };
+$('gateCancel').onclick=function(){ gateStopGps(); $('gateScrim').classList.remove('on'); };
+$('gateStart').onclick=function(){ gateStopGps(); $('gateScrim').classList.remove('on');
+  openOdoModal('Odometer before ride','Read it off your dash so fuel use can be worked out. You can skip it.',uLabel(),'Start ride',function(odo){ beginRide(odo); }); };
+
+/* ================= v11: ride-lock (buttons off at speed, swipe only) ================= */
+var rideLocked=false, lockBelowSince=0;
+function rideLockSet(on){ rideLocked=on; document.body.classList.toggle('locked',on);
+  var lb=$('rLock'); if(lb)lb.classList.toggle('hide',!on);
+  ['stopBtn','rpAutoBtn','imuCalBtn','calBtn','engSampleBtn','fwdNowBtn'].forEach(function(id){var e=$(id);if(e)e.disabled=on;}); }
+function updateLock(kmh){ var th=cfg.lockSpeed||8;
+  if(kmh>=th){ lockBelowSince=0; if(!rideLocked) rideLockSet(true); }
+  else { if(!lockBelowSince) lockBelowSince=Date.now();
+    if(rideLocked && (Date.now()-lockBelowSince)>=4000) rideLockSet(false); } }
+
+/* ================= v11: swipe pager + auto-advance ================= */
+var pagerEl=null, pagerPages=[], autoTimer=null;
+function pagerInit(){ pagerEl=$('rpPages'); if(!pagerEl)return;
+  pagerPages=[].slice.call(pagerEl.querySelectorAll('.rp-page'));
+  var dots=$('rpDots'); dots.innerHTML='';
+  pagerPages.forEach(function(pg,i){ var b=document.createElement('button');
+    b.onclick=function(){ pagerGo(i); rotTick(); }; dots.appendChild(b); });
+  pagerEl.onscroll=function(){ pagerSync(); };
+  pagerGo(0); pagerSync(); }
+function pagerIndex(){ if(!pagerEl||!pagerEl.clientWidth)return 0; return Math.round(pagerEl.scrollLeft/pagerEl.clientWidth); }
+function pagerSync(){ var idx=pagerIndex(), dots=$('rpDots'); if(dots)[].forEach.call(dots.children,function(b,i){ b.classList.toggle('on',i===idx); });
+  if(idx===WX_PG){ var o=Maps['rideMap'], n=Date.now(); if(o&&n-(pagerSync._w||0)>400){ pagerSync._w=n; try{o.map.invalidateSize();}catch(e){} } } }
+function pagerGo(i){ if(!pagerEl)return; i=Math.max(0,Math.min(pagerPages.length-1,i));
+  pagerEl.scrollLeft=i*pagerEl.clientWidth; pagerSync(); }   /* direct set: smooth scrollTo snaps back under mandatory scroll-snap */
+/* v12: ride page rotation — Dashboard (30 s) ⇄ Weather (5 s); a rain warning holds Weather */
+var DASH_PG=0, WX_PG=1, rideRotate=true, rainHold=false;
+function autoClear(){ if(autoTimer){clearTimeout(autoTimer);autoTimer=null;} }
+function rotTick(){ autoClear(); if(!rec)return;
+  if(rainHold){ if(pagerIndex()!==WX_PG)pagerGo(WX_PG); autoTimer=setTimeout(rotTick,3000); return; }   /* hold Weather during a warning */
+  if(!rideRotate)return;
+  var idx=pagerIndex();
+  if(idx===DASH_PG){ autoTimer=setTimeout(function(){ if(pagerIndex()===DASH_PG)pagerGo(WX_PG); rotTick(); }, ((cfg.dwell&&cfg.dwell.dash)||30)*1000); }
+  else if(idx===WX_PG){ autoTimer=setTimeout(function(){ if(pagerIndex()===WX_PG)pagerGo(DASH_PG); rotTick(); }, ((cfg.dwell&&cfg.dwell.wx)||5)*1000); }
+  else { autoTimer=setTimeout(rotTick,5000); } }   /* on More: idle, re-check */
+function setRotate(on){ rideRotate=on; var b=$('rpAutoBtn'); if(b){ b.classList.toggle('on',on); b.textContent=(on?'⏸ Rotate':'▶ Rotate'); } if(on)rotTick(); else autoClear(); }
+function rideWxRefresh(){ var obj=Maps['rideMap']; if(!obj||!navigator.onLine)return; obj.cloudsOn=true; loadClouds(obj,(rec&&rec.lastLat!=null)?[rec.lastLat,rec.lastLon]:null); }
+$('rpAutoBtn').onclick=function(){ if(rideLocked)return; setRotate(!rideRotate); };
+window.addEventListener('resize',function(){ if(document.body.classList.contains('riding'))pagerSync(); });
+
+/* ================= v11: ride map (follow GPS) ================= */
+var rideFollow=true;
+function rideMapInit(){ var obj=ensureMap('rideMap','rideWxInfo'); if(!obj)return; obj.rvTimeEl=$('rideRadarTime');
+  setTimeout(function(){ try{obj.map.invalidateSize();}catch(e){}
+    try{ if(rec&&rec.lastLat!=null)obj.map.setView([rec.lastLat,rec.lastLon],16); else obj.map.setView([1.3521,103.8198],12); }catch(e){} },150);
+  if(!obj._rideBound){ obj._rideBound=true; obj.map.on('dragstart',function(){ if(rideFollow){ rideFollow=false; cfg.rideFollow=false; save(LS.cfg,cfg); updateFollowBtn(); } }); } }
+function rideMapUpdate(c,valid){ var obj=Maps['rideMap']; if(!obj)return;
+  var ll=[c.latitude,c.longitude]; obj.me.clearLayers();
+  L.circleMarker(ll,{radius:8,color:'#04120a',weight:3,fillColor:(valid?'#2fd27a':'#f0a73a'),fillOpacity:1}).addTo(obj.me);
+  if(rec&&rec.track.length>1) drawRouteOnMap(obj,rec.track,false);
+  if(rideFollow){ try{ obj.map.setView(ll, obj.map.getZoom()||16, {animate:false}); }catch(e){} } }
+function updateFollowBtn(){ var b=$('rideFollowBtn'); if(!b)return; b.textContent='◎ Follow: '+(rideFollow?'on':'off'); b.classList.toggle('off',!rideFollow); }
+$('rideFollowBtn').onclick=function(){ rideFollow=!rideFollow; cfg.rideFollow=rideFollow; save(LS.cfg,cfg); updateFollowBtn();
+  if(rideFollow&&rec&&rec.lastLat!=null){ var obj=Maps['rideMap']; if(obj){ try{obj.map.setView([rec.lastLat,rec.lastLon],16);}catch(e){} } } };
+
+/* ================= v11: stop-confirm + keypad-driven fuel fields ================= */
+$('stopCancel').onclick=function(){ $('stopScrim').classList.remove('on'); };
+$('stopConfirm').onclick=function(){ $('stopScrim').classList.remove('on'); stopRide(); };
+(function(){ [['fuelOdo','Odometer','e.g. 12840'],['fuelLit','Litres filled','e.g. 7.2'],['fuelPrice','Price paid','e.g. 18.50']].forEach(function(f){
+  var el=$(f[0]); if(!el)return; el.readOnly=true; el.setAttribute('inputmode','none');
+  el.addEventListener('focus',function(e){ try{e.target.blur();}catch(_){} });
+  el.onclick=function(){ openKeypad({title:f[1],ph:f[2],initial:el.value,allowDot:true,okText:'Done',onOk:function(v,raw){ el.value=(raw==null?'':raw); }}); };
+}); try{ $('calScrim').style.zIndex='65'; }catch(e){} })();
 
 /* ================= INIT ================= */
 try{ $('fuelGrade').value=cfg.lastGrade; }catch(e){}
-applyUnitLabels(); renderTrips(); renderFuel(); show('scr-trips');
+applyUnitLabels(); renderTrips(); renderFuel(); refreshBackup(); updateImuStat(); resetPendingFuel(); show('scr-trips');
 window.addEventListener('beforeunload',function(e){ if(rec){e.preventDefault();e.returnValue='';} });
 })();
 </script>
